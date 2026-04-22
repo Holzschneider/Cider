@@ -22,6 +22,11 @@ cleanup() {
 }
 trap cleanup INT TERM HUP
 
+# Run with cwd = the macOS-side directory that maps to the exe's drive_c
+# location, so apps that drop side files (configs, logs) put them next to the
+# .exe inside the bundled prefix, not in the terminal's cwd.
+cd "$DIR/wineprefix/drive_c/@@EXE_CWD_REL@@"
+
 "$WINE_BIN" \
   "@@WIN_EXE_PATH@@" @@EXE_ARGS@@ "$@"
 status=$?

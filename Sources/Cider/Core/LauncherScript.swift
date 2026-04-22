@@ -5,6 +5,7 @@ enum LauncherScript {
         let bundleId: String
         let wineBinaryRelativePath: String  // path under Resources/engine/, e.g. "wswine.bundle/bin/wine"
         let winExePath: String              // e.g. "C:\\Program Files\\My Game\\Game.exe"
+        let exeWorkingDirRelativeToDriveC: String  // e.g. "Program Files/My Game"
         let exeArgs: [String]
         let dllOverrides: String
         let extraEnv: [String: String]
@@ -28,6 +29,10 @@ enum LauncherScript {
         template = template.replacingOccurrences(
             of: "@@WIN_EXE_PATH@@",
             with: escape(subs.winExePath)
+        )
+        template = template.replacingOccurrences(
+            of: "@@EXE_CWD_REL@@",
+            with: escape(subs.exeWorkingDirRelativeToDriveC)
         )
         template = template.replacingOccurrences(
             of: "@@EXE_ARGS@@",

@@ -81,11 +81,21 @@ struct BundleBuilder {
         try InfoPlistWriter.writePkgInfo(to: contents.appendingPathComponent("PkgInfo"))
 
         // 7. Launcher.
+        // Working dir for the launcher: the macOS-side equivalent of the
+        // Windows directory containing the .exe. e.g. "Program Files/Test"
+        // when --exe is "foo.exe" at the root, "Program Files/Test/RagnarokPlus"
+        // when --exe is "RagnarokPlus/ragnarok-plus-patcher.exe".
+        let exeRelDir = (config.exe as NSString).deletingLastPathComponent
+        let exeWorkingDir = exeRelDir.isEmpty
+            ? "Program Files/\(config.name)"
+            : "Program Files/\(config.name)/\(exeRelDir)"
+
         try LauncherScript.render(
             .init(
                 bundleId: config.bundleId,
                 wineBinaryRelativePath: wineRel,
                 winExePath: winExePath,
+                exeWorkingDirRelativeToDriveC: exeWorkingDir,
                 exeArgs: config.args,
                 dllOverrides: graphicsResult.dllOverrides,
                 extraEnv: graphicsResult.extraEnv
