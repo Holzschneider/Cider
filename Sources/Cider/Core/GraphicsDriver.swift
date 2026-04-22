@@ -1,15 +1,23 @@
 import Foundation
 
 // Installs the chosen graphics driver into the bundled Wine prefix.
-// For v1 we stage the necessary DLLs into drive_c/windows/system32 and record
-// the WINEDLLOVERRIDES string for the launcher. We deliberately avoid
-// downloading DXMT/DXVK binaries at build time when the engine already ships
-// with the DLLs we need (CrossOver engines bundle D3DMetal); this keeps the
-// offline path working.
+//
+// The Sikarugir Wrapper Template ships per-renderer DLLs in a clean tree:
+//   Contents/Frameworks/renderer/<kind>/wine/x86_64-windows/*.dll  (64-bit)
+//   Contents/Frameworks/renderer/<kind>/wine/i386-windows/*.dll    (32-bit)
+//
+// We mirror that into the prefix:
+//   x86_64 → drive_c/windows/system32/   (used by 64-bit Windows apps)
+//   i386   → drive_c/windows/syswow64/   (used by 32-bit apps via wow64)
+//
+// D3DMetal currently ships x86_64 only — that is expected; we warn but do not
+// fail. WINEDLLOVERRIDES is set per kind so wine prefers the native (Metal)
+// implementation, falling back to the builtin if the override file is missing.
 struct GraphicsDriver {
     let kind: GraphicsDriverKind
     let prefix: URL
-    let engineRoot: URL
+    let templateApp: URL
+    let templateManager: TemplateManager
 
     struct Result {
         let dllOverrides: String
@@ -17,103 +25,45 @@ struct GraphicsDriver {
     }
 
     func install() throws -> Result {
-        switch kind {
-        case .d3dmetal:
-            try installFromEngineIfAvailable(
-                searchPaths: [
-                    "lib/external/D3DMetal",
-                    "lib64/external/D3DMetal",
-                    "D3DMetal"
-                ],
-                requiredDLLs: ["d3d11.dll", "dxgi.dll", "d3d10core.dll", "d3d12.dll"]
-            )
-        case .dxmt:
-            try installFromEngineIfAvailable(
-                searchPaths: ["lib/external/DXMT", "DXMT"],
-                requiredDLLs: ["d3d11.dll", "dxgi.dll", "d3d10core.dll"]
-            )
-        case .dxvk:
-            try installFromEngineIfAvailable(
-                searchPaths: ["lib/external/DXVK", "DXVK"],
-                requiredDLLs: ["d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"]
-            )
-        }
-
+        try installArch(.x86_64, into: "system32", required: true)
+        try installArch(.i386, into: "syswow64", required: false)
         return Result(
             dllOverrides: kind.dllOverrides,
             extraEnv: extraEnv(for: kind)
         )
     }
 
-    // Looks for the required DLLs inside the engine and copies them into
-    // system32. If not found, leaves the prefix alone and warns — the user may
-    // have selected a driver the engine doesn't ship, and Wine will fall back
-    // to its builtin behaviour.
-    private func installFromEngineIfAvailable(
-        searchPaths: [String],
-        requiredDLLs: [String]
+    private func installArch(
+        _ arch: TemplateManager.WineArch,
+        into windowsSubdir: String,
+        required: Bool
     ) throws {
-        let fm = FileManager.default
-        let system32 = prefix
-            .appendingPathComponent("drive_c")
-            .appendingPathComponent("windows")
-            .appendingPathComponent("system32")
-
-        // Try a few relative directories under engineRoot.
-        for rel in searchPaths {
-            let base = engineRoot.appendingPathComponent(rel, isDirectory: true)
-            guard fm.fileExists(atPath: base.path) else { continue }
-            var copiedAny = false
-            for dll in requiredDLLs {
-                let src = base.appendingPathComponent(dll)
-                guard fm.fileExists(atPath: src.path) else { continue }
-                let dst = system32.appendingPathComponent(dll)
-                try fm.createDirectory(at: system32, withIntermediateDirectories: true)
-                if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
-                try fm.copyItem(at: src, to: dst)
-                copiedAny = true
-            }
-            if copiedAny {
-                Log.debug("installed \(kind.rawValue) DLLs from \(rel)")
-                return
-            }
-        }
-
-        // Last resort: glob for the DLLs anywhere in the engine tree.
-        if let found = try findFirstMatching(under: engineRoot, names: Set(requiredDLLs)), !found.isEmpty {
-            try fm.createDirectory(at: system32, withIntermediateDirectories: true)
-            for src in found {
-                let dst = system32.appendingPathComponent(src.lastPathComponent)
-                if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
-                try fm.copyItem(at: src, to: dst)
-            }
-            Log.debug("installed \(kind.rawValue) DLLs via engine-wide search")
+        guard let source = templateManager.rendererDirectory(
+            of: templateApp, kind: kind, arch: arch
+        ) else {
+            let level = required ? "error" : "warning"
+            let msg = "no \(kind.rawValue) DLLs for \(arch.rawValue) in template — \(windowsSubdir) will use Wine builtins."
+            if required { Log.warn(msg) } else { Log.debug(msg) }
+            _ = level
             return
         }
 
-        Log.warn("""
-            Could not locate \(kind.rawValue) DLLs in engine \
-            \(engineRoot.lastPathComponent). Wine will use its builtin fallback. \
-            Re-bundle with a different --graphics driver if the app requires \
-            DirectX translation.
-            """)
-    }
+        let destination = prefix
+            .appendingPathComponent("drive_c")
+            .appendingPathComponent("windows")
+            .appendingPathComponent(windowsSubdir)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
 
-    private func findFirstMatching(under root: URL, names: Set<String>) throws -> [URL]? {
-        var results: [String: URL] = [:]
-        let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey]
-        )
-        while let url = enumerator?.nextObject() as? URL {
-            let name = url.lastPathComponent.lowercased()
-            if names.contains(where: { $0.lowercased() == name }),
-               results[name] == nil {
-                results[name] = url
-            }
-            if results.count == names.count { break }
+        let fm = FileManager.default
+        let entries = try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
+        var copied = 0
+        for entry in entries where entry.pathExtension.lowercased() == "dll" {
+            let dst = destination.appendingPathComponent(entry.lastPathComponent)
+            if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
+            try fm.copyItem(at: entry, to: dst)
+            copied += 1
         }
-        return results.isEmpty ? nil : Array(results.values)
+        Log.debug("installed \(copied) \(kind.rawValue) \(arch.rawValue) DLLs into \(windowsSubdir)")
     }
 
     private func extraEnv(for kind: GraphicsDriverKind) -> [String: String] {

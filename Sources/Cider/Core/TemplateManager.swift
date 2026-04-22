@@ -53,6 +53,30 @@ struct TemplateManager {
             .appendingPathComponent("Frameworks", isDirectory: true)
     }
 
+    enum WineArch: String {
+        case x86_64 = "x86_64-windows"
+        case i386 = "i386-windows"
+    }
+
+    // The template ships per-renderer DLLs at:
+    //   Contents/Frameworks/renderer/<kind>/wine/<arch>/
+    // Returns nil if the directory does not exist (e.g. D3DMetal is x86_64
+    // only — there is no i386-windows folder for it).
+    func rendererDirectory(
+        of templateApp: URL,
+        kind: GraphicsDriverKind,
+        arch: WineArch
+    ) -> URL? {
+        let url = templateApp
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Frameworks", isDirectory: true)
+            .appendingPathComponent("renderer", isDirectory: true)
+            .appendingPathComponent(kind.rawValue, isDirectory: true)
+            .appendingPathComponent("wine", isDirectory: true)
+            .appendingPathComponent(arch.rawValue, isDirectory: true)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     private func template(in dir: URL, version: String) -> URL {
         dir.appendingPathComponent("Template-\(version).app", isDirectory: true)
     }

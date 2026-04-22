@@ -48,11 +48,12 @@ struct BundleBuilder {
             programName: config.name
         )
 
-        // 4. Install graphics driver DLLs.
+        // 4. Install graphics driver DLLs (both arches into system32 + syswow64).
         let graphics = GraphicsDriver(
             kind: config.graphics,
             prefix: prefix,
-            engineRoot: engineDest
+            templateApp: templateApp,
+            templateManager: templateManager
         )
         let graphicsResult = try graphics.install()
 
