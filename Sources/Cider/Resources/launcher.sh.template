@@ -3,9 +3,10 @@ set -e
 
 # Cider-generated launcher. Edit with care — replaced on re-bundle.
 DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
+WINE_BIN="$DIR/engine/@@WINE_BIN_REL@@"
 
 export WINEPREFIX="$DIR/wineprefix"
-export PATH="$DIR/engine/wine-home/usr/bin:$PATH"
+export PATH="$(dirname "$WINE_BIN"):$PATH"
 @@DYLD_FALLBACK_LIBRARY_PATH@@
 @@WINEDLLOVERRIDES@@
 @@EXTRA_ENV@@
@@ -14,5 +15,5 @@ LOG_DIR="${TMPDIR:-/tmp}/Cider-@@BUNDLE_ID@@"
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_DIR/launcher.log") 2>&1
 
-exec "$DIR/engine/wine-home/usr/bin/wine64" \
+exec "$WINE_BIN" \
   "@@WIN_EXE_PATH@@" @@EXE_ARGS@@ "$@"

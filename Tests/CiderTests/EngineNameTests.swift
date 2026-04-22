@@ -10,7 +10,7 @@ final class EngineNameTests: XCTestCase {
         XCTAssertEqual(e.archiveFilename, "WS12WineCX24.0.7_7.tar.xz")
         XCTAssertEqual(
             e.releaseDownloadURL.absoluteString,
-            "https://github.com/Sikarugir-App/Engines/releases/download/WS12WineCX24.0.7_7/WS12WineCX24.0.7_7.tar.xz"
+            "https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineCX24.0.7_7.tar.xz"
         )
     }
 

@@ -2,7 +2,7 @@ import Foundation
 
 struct PrefixInitializer {
     let prefix: URL
-    let wine64: URL
+    let wineBinary: URL
 
     // Runs wineboot -u to populate `prefix` with a minimal Windows environment.
     // Safe to skip if `skip` is true — the bottle will then be initialised on
@@ -14,7 +14,7 @@ struct PrefixInitializer {
             return
         }
         Log.info("initialising Wine prefix (first run may take ~30s)")
-        try Shell.run(wine64.path, ["wineboot", "-u"], environment: [
+        try Shell.run(wineBinary.path, ["wineboot", "-u"], environment: [
             "WINEPREFIX": prefix.path,
             "WINEDEBUG": "-all"
         ], captureOutput: true)

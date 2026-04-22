@@ -3,7 +3,8 @@ import Foundation
 enum LauncherScript {
     struct Substitutions {
         let bundleId: String
-        let winExePath: String        // e.g. "C:\\Program Files\\My Game\\Game.exe"
+        let wineBinaryRelativePath: String  // path under Resources/engine/, e.g. "wswine.bundle/bin/wine"
+        let winExePath: String              // e.g. "C:\\Program Files\\My Game\\Game.exe"
         let exeArgs: [String]
         let dllOverrides: String
         let extraEnv: [String: String]
@@ -21,6 +22,10 @@ enum LauncherScript {
 
         template = template.replacingOccurrences(of: "@@BUNDLE_ID@@", with: subs.bundleId)
         template = template.replacingOccurrences(
+            of: "@@WINE_BIN_REL@@",
+            with: escape(subs.wineBinaryRelativePath)
+        )
+        template = template.replacingOccurrences(
             of: "@@WIN_EXE_PATH@@",
             with: escape(subs.winExePath)
         )
@@ -32,9 +37,16 @@ enum LauncherScript {
             of: "@@WINEDLLOVERRIDES@@",
             with: "export WINEDLLOVERRIDES=\"\(subs.dllOverrides)\""
         )
+        // dlopen on macOS does NOT use the wine binary's LC_RPATH; it consults
+        // DYLD_*_LIBRARY_PATH. Wine's font driver, vulkan loader, etc. all
+        // dlopen support dylibs by leaf name, so we must point those env vars
+        // at the directory where Cider deposits the wrapper-template Frameworks
+        // (sibling of wswine.bundle), as well as wine's own lib dir.
         template = template.replacingOccurrences(
             of: "@@DYLD_FALLBACK_LIBRARY_PATH@@",
-            with: "export DYLD_FALLBACK_LIBRARY_PATH=\"$DIR/engine/wine-home/usr/lib:${DYLD_FALLBACK_LIBRARY_PATH:-/usr/local/lib:/usr/lib}\""
+            with: """
+            export DYLD_FALLBACK_LIBRARY_PATH="$DIR/engine:$DIR/engine/moltenvkcx:$(dirname "$(dirname "$WINE_BIN")")/lib:${DYLD_FALLBACK_LIBRARY_PATH:-/usr/local/lib:/usr/lib}"
+            """
         )
 
         let extra = subs.extraEnv

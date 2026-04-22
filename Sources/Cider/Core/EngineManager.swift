@@ -53,28 +53,34 @@ struct EngineManager {
         return target
     }
 
-    // Resolve the wine64 binary path inside an extracted engine.
-    // Sikarugir engines typically place wine64 at wine-home/usr/bin/wine64 or
-    // Wine64.app/Contents/Resources/wine/bin/wine64. We probe both.
-    func wine64Path(in engineRoot: URL) throws -> URL {
-        let candidates = [
+    // Resolve the wine binary inside an extracted engine. Modern CrossOver
+    // engines ship a single unified `wine` (no `wine64`); older builds and
+    // Wineskin-style layouts vary. We probe a known set of layouts, then fall
+    // back to a recursive search.
+    func wineBinaryPath(in engineRoot: URL) throws -> URL {
+        let layouts = [
+            "wswine.bundle/bin/wine",       // Sikarugir / modern CrossOver (Wineskin S12)
+            "wswine.bundle/bin/wine64",
             "wine-home/usr/bin/wine64",
+            "wine-home/usr/bin/wine",
             "wine-home/bin/wine64",
+            "wine-home/bin/wine",
             "Wineskin.app/Contents/Resources/wine-home/usr/bin/wine64",
             "Wine64.app/Contents/Resources/wine/bin/wine64",
-            "bin/wine64"
+            "bin/wine64",
+            "bin/wine"
         ]
-        for rel in candidates {
+        for rel in layouts {
             let candidate = engineRoot.appendingPathComponent(rel)
             if FileManager.default.isExecutableFile(atPath: candidate.path) {
                 return candidate
             }
         }
-        // Fallback: search for any executable named wine64.
-        if let found = try findExecutable(named: "wine64", in: engineRoot) {
+        if let found = try findExecutable(named: "wine64", in: engineRoot)
+            ?? findExecutable(named: "wine", in: engineRoot) {
             return found
         }
-        throw Error.wine64NotFound(engineRoot)
+        throw Error.wineBinaryNotFound(engineRoot)
     }
 
     private func findExecutable(named name: String, in root: URL) throws -> URL? {
@@ -93,11 +99,11 @@ struct EngineManager {
     }
 
     enum Error: Swift.Error, CustomStringConvertible {
-        case wine64NotFound(URL)
+        case wineBinaryNotFound(URL)
         var description: String {
             switch self {
-            case .wine64NotFound(let root):
-                return "Could not locate wine64 binary inside \(root.path). Engine may be corrupted."
+            case .wineBinaryNotFound(let root):
+                return "Could not locate wine or wine64 binary inside \(root.path). Engine may be corrupted."
             }
         }
     }

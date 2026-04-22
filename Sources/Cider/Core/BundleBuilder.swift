@@ -19,7 +19,20 @@ struct BundleBuilder {
         let engineDest = resources.appendingPathComponent("engine", isDirectory: true)
         Log.info("copying engine \(config.engine.raw) into bundle")
         try copyDirectory(from: cachedEngine, to: engineDest)
-        let wine64 = try engineManager.wine64Path(in: engineDest)
+
+        // 1b. Ensure the Sikarugir Wrapper Template is cached and copy its
+        // Frameworks alongside wswine.bundle/ so the wine binaries' rpath
+        // (@loader_path/../../) resolves libinotify, libsdl, libgnutls, etc.
+        let templateManager = TemplateManager()
+        let templateApp = try await templateManager.ensure()
+        try copyContents(
+            of: templateManager.frameworksDirectory(of: templateApp),
+            into: engineDest
+        )
+
+        let wineBinary = try engineManager.wineBinaryPath(in: engineDest)
+        let wineRel = wineBinary.path.replacingOccurrences(
+            of: engineDest.path + "/", with: "")
 
         // 2. Stage Windows payload.
         let staged = try PayloadStaging.stage(input: config.input)
@@ -27,7 +40,7 @@ struct BundleBuilder {
 
         // 3. Initialise Wine prefix and copy payload into drive_c/Program Files.
         let prefix = resources.appendingPathComponent("wineprefix", isDirectory: true)
-        let prefixInit = PrefixInitializer(prefix: prefix, wine64: wine64)
+        let prefixInit = PrefixInitializer(prefix: prefix, wineBinary: wineBinary)
         try prefixInit.initialise(skip: !config.preInitPrefix)
         let winExePath = try prefixInit.stagePayload(
             from: staged.root,
@@ -71,6 +84,7 @@ struct BundleBuilder {
         try LauncherScript.render(
             .init(
                 bundleId: config.bundleId,
+                wineBinaryRelativePath: wineRel,
                 winExePath: winExePath,
                 exeArgs: config.args,
                 dllOverrides: graphicsResult.dllOverrides,
@@ -116,5 +130,16 @@ struct BundleBuilder {
         // Use `cp -a` to preserve symlinks and permissions, which matters for
         // Wine engine payloads (they symlink wine64 → wine, etc.).
         try Shell.run("/bin/cp", ["-a", source.path, destination.path], captureOutput: true)
+    }
+
+    private func copyContents(of source: URL, into destination: URL) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        let entries = try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
+        for entry in entries {
+            let dest = destination.appendingPathComponent(entry.lastPathComponent)
+            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+            try Shell.run("/bin/cp", ["-a", entry.path, dest.path], captureOutput: true)
+        }
     }
 }

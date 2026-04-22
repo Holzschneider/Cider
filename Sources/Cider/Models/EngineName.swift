@@ -39,10 +39,15 @@ struct EngineName: Hashable, Codable, CustomStringConvertible {
 
     var archiveFilename: String { "\(raw).tar.xz" }
 
-    // Sikarugir publishes engines with a release tag matching the engine name.
-    // The archive lives at the same tag as the engine name.
+    // Sikarugir publishes all engines as assets under a single release tag.
+    // Override with CIDER_ENGINES_TAG env var if a future release uses a
+    // different tag name.
+    static var releaseTag: String {
+        ProcessInfo.processInfo.environment["CIDER_ENGINES_TAG"] ?? "v1.0"
+    }
+
     var releaseDownloadURL: URL {
-        URL(string: "https://github.com/Sikarugir-App/Engines/releases/download/\(raw)/\(archiveFilename)")!
+        URL(string: "https://github.com/Sikarugir-App/Engines/releases/download/\(Self.releaseTag)/\(archiveFilename)")!
     }
 
     enum Error: Swift.Error, CustomStringConvertible {
