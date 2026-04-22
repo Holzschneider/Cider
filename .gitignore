@@ -1,0 +1,16 @@
+.DS_Store
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj
+xcuserdata/
+Package.resolved
+
+# Build artefacts
+/build/
+/dist/
+*.app/
+
+# Local engine downloads used during manual testing
+/tmp/
+/scratch/
