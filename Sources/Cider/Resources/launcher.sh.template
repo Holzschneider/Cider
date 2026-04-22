@@ -15,5 +15,15 @@ LOG_DIR="${TMPDIR:-/tmp}/Cider-@@BUNDLE_ID@@"
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_DIR/launcher.log") 2>&1
 
-exec "$WINE_BIN" \
+# Tear down the wine session if the launcher is interrupted so we don't leak
+# winedbg/conhost children. wineserver lives in $(dirname "$WINE_BIN").
+cleanup() {
+  "$(dirname "$WINE_BIN")/wineserver" -k 2>/dev/null || true
+}
+trap cleanup INT TERM HUP
+
+"$WINE_BIN" \
   "@@WIN_EXE_PATH@@" @@EXE_ARGS@@ "$@"
+status=$?
+cleanup
+exit $status

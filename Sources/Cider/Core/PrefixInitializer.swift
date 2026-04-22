@@ -18,6 +18,23 @@ struct PrefixInitializer {
             "WINEPREFIX": prefix.path,
             "WINEDEBUG": "-all"
         ], captureOutput: true)
+        try disableAeDebug()
+    }
+
+    // Disable Wine's auto-debugger so an unhandled exception in the bundled
+    // app does not spawn a runaway swarm of winedbg.exe processes. We write
+    // the registry value via `wine reg add` so the change survives launches
+    // without us touching system.reg directly.
+    private func disableAeDebug() throws {
+        Log.debug("disabling AeDebug auto-attach in the bundled prefix")
+        try Shell.run(wineBinary.path, [
+            "reg", "add",
+            #"HKCU\Software\Wine\AeDebug"#,
+            "/v", "Auto", "/t", "REG_SZ", "/d", "0", "/f"
+        ], environment: [
+            "WINEPREFIX": prefix.path,
+            "WINEDEBUG": "-all"
+        ], captureOutput: true)
     }
 
     // Copies the Windows payload into drive_c/Program Files/<name>/. Returns the
