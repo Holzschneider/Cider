@@ -40,11 +40,17 @@ enum GUIEntry {
         let shell = AppShell()
 
         if let resolved {
-            // Configured bundle → splash. Even without a configured splash
-            // image we still attach a small placeholder so the user sees
-            // *something* while the launch path warms up (Phase 10).
+            // Configured bundle → splash + LaunchPipeline.
             let cfg = resolved.config
-            let splashURL = splashURL(for: cfg, configSource: resolved.source)
+            let configBaseDir = configBaseDir(for: resolved.source)
+            let splashURL = splashURL(for: cfg, baseDir: configBaseDir)
+            let iconURL = iconURL(for: cfg, baseDir: configBaseDir)
+
+            // First-launch (or per-launch) icon refresh: cheap; just
+            // re-apply on every launch so the user always sees the icon
+            // their cider.json says they should see.
+            applyIconIfPresent(iconURL, to: env.bundleURL)
+
             let controller = SplashController.load(
                 splashFile: splashURL,
                 transparentHint: cfg.splash?.transparent ?? false
@@ -52,7 +58,6 @@ enum GUIEntry {
             controller?.onDoubleClick = { [weak controller] in
                 let outcome = MoreDialogController.present(prefill: cfg, dropped: .none)
                 if case .saved(let updated, _) = outcome {
-                    // Persist back to the same source the config came from.
                     do {
                         switch resolved.source {
                         case .inBundleOverride(let url):
@@ -60,8 +65,6 @@ enum GUIEntry {
                         case .appSupport(let url):
                             try updated.write(to: url)
                         }
-                        // Cheapest "apply changes": tear down the splash so
-                        // the user can relaunch and see their edits.
                         controller?.requestClose()
                     } catch {
                         let alert = NSAlert()
@@ -72,12 +75,19 @@ enum GUIEntry {
                 }
             }
             shell.run { _ in
-                if let controller {
-                    controller.attach()
-                } else {
+                guard let controller else {
                     FileHandle.standardError.write(Data(
                         "cider: configured bundle '\(env.bundleName)' has no splash image.\n".utf8))
+                    NSApplication.shared.terminate(nil)
+                    return
                 }
+                controller.attach()
+                runLaunchPipeline(
+                    config: cfg,
+                    bundleURL: env.bundleURL,
+                    bundleName: env.bundleName,
+                    splash: controller
+                )
             }
         } else {
             // Unconfigured bundle → drop zone window.
@@ -86,19 +96,100 @@ enum GUIEntry {
         }
     }
 
-    // Splash + icon paths in cider.json are resolved relative to the
-    // directory the cider.json itself lives in.
-    private static func splashURL(
-        for cfg: CiderConfig,
-        configSource: ConfigStore.Resolved.Source
-    ) -> URL? {
-        guard let file = cfg.splash?.file else { return nil }
-        let baseDir: URL
-        switch configSource {
-        case .inBundleOverride(let url): baseDir = url.deletingLastPathComponent()
-        case .appSupport(let url): baseDir = url.deletingLastPathComponent()
+    private static func configBaseDir(for source: ConfigStore.Resolved.Source) -> URL {
+        switch source {
+        case .inBundleOverride(let url): return url.deletingLastPathComponent()
+        case .appSupport(let url): return url.deletingLastPathComponent()
         }
+    }
+
+    private static func splashURL(for cfg: CiderConfig, baseDir: URL) -> URL? {
+        guard let file = cfg.splash?.file else { return nil }
         return baseDir.appendingPathComponent(file)
+    }
+
+    private static func iconURL(for cfg: CiderConfig, baseDir: URL) -> URL? {
+        guard let file = cfg.icon else { return nil }
+        return baseDir.appendingPathComponent(file)
+    }
+
+    private static func applyIconIfPresent(_ iconURL: URL?, to bundleURL: URL) {
+        guard let iconURL,
+              FileManager.default.fileExists(atPath: iconURL.path)
+        else { return }
+        let icnsURL: URL
+        if iconURL.pathExtension.lowercased() == "icns" {
+            icnsURL = iconURL
+        } else {
+            // Convert to a temp .icns; success or failure both non-fatal.
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cider-icon-\(UUID().uuidString).icns")
+            do {
+                try IconConverter.convert(png: iconURL, destination: tmp)
+                icnsURL = tmp
+            } catch {
+                Log.warn("could not convert icon to .icns: \(error)")
+                return
+            }
+        }
+        _ = IconConverter.applyAsCustomIcon(at: icnsURL, to: bundleURL)
+    }
+
+    // Kicks off LaunchPipeline on a background Task while AppKit drives
+    // the splash. On normal exit, terminates the app with wine's exit
+    // code (best-effort — NSApplication.terminate doesn't accept a code,
+    // so we exit() if non-zero).
+    private static func runLaunchPipeline(
+        config: CiderConfig,
+        bundleURL: URL,
+        bundleName: String,
+        splash: SplashController
+    ) {
+        let pipeline = LaunchPipeline(
+            config: config,
+            bundleURL: bundleURL,
+            bundleName: bundleName,
+            progress: { title, detail, fraction in
+                Task { @MainActor in
+                    splash.progress.show(title: title, detail: detail, fraction: fraction)
+                }
+            },
+            settle: {
+                Task { @MainActor in
+                    splash.progress.hide()
+                }
+            },
+            onError: { error in
+                Task { @MainActor in
+                    let alert = NSAlert()
+                    alert.messageText = "Launch failed"
+                    alert.informativeText = String(describing: error)
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                    NSApplication.shared.terminate(nil)
+                }
+            }
+        )
+
+        Task.detached {
+            do {
+                let exitCode = try await pipeline.runEndToEnd()
+                Log.info("wine exited with status \(exitCode)")
+                await MainActor.run {
+                    NSApplication.shared.terminate(nil)
+                }
+                if exitCode != 0 { exit(exitCode) }
+            } catch {
+                await MainActor.run {
+                    let alert = NSAlert()
+                    alert.messageText = "Launch failed"
+                    alert.informativeText = String(describing: error)
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                    NSApplication.shared.terminate(nil)
+                }
+            }
+        }
     }
 }
 

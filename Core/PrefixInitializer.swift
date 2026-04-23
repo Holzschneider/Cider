@@ -39,13 +39,26 @@ public struct PrefixInitializer {
         ], captureOutput: true)
     }
 
-    // Copies the Windows payload into drive_c/Program Files/<programName>/.
-    // Returns the absolute Windows-style path to the .exe inside the bottle.
+    public enum StagingMode {
+        // Default. Each entry under `source/` becomes a symlink under
+        // drive_c/Program Files/<programName>/. Honours the spec's
+        // "never copy by default" rule and is instant.
+        case symlinks
+        // Copy each entry. Slower, more disk, but the bundle keeps
+        // working if the user moves/deletes the source folder.
+        case copy
+    }
+
+    // Stages the Windows payload as siblings under
+    // drive_c/Program Files/<programName>/, either via symlinks (default)
+    // or recursive copy. Returns the Windows-style absolute path to the
+    // exe inside the prefix (e.g. "C:\\Program Files\\MyGame\\Game.exe").
     @discardableResult
     public func stagePayload(
         from source: URL,
         exeRelativePath: String,
-        programName: String
+        programName: String,
+        mode: StagingMode = .symlinks
     ) throws -> String {
         let targetDir = prefix
             .appendingPathComponent("drive_c")
@@ -53,10 +66,13 @@ public struct PrefixInitializer {
             .appendingPathComponent(programName)
         try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
 
-        try copyContents(of: source, into: targetDir)
+        try refreshContents(of: source, into: targetDir, mode: mode)
 
         let exeWithinTarget = targetDir.appendingPathComponent(exeRelativePath)
-        guard FileManager.default.fileExists(atPath: exeWithinTarget.path) else {
+        let resolved = (try? exeWithinTarget.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
+        // Symlinks resolve under fileExists, but isRegularFile follows the
+        // link to confirm the underlying file is real.
+        guard FileManager.default.fileExists(atPath: exeWithinTarget.path) || resolved else {
             throw Error.exeNotFound(exeRelativePath, targetDir)
         }
 
@@ -65,15 +81,21 @@ public struct PrefixInitializer {
         return winPath
     }
 
-    private func copyContents(of source: URL, into target: URL) throws {
+    private func refreshContents(of source: URL, into target: URL, mode: StagingMode) throws {
         let fm = FileManager.default
         let entries = try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
         for entry in entries {
             let dest = target.appendingPathComponent(entry.lastPathComponent)
-            if fm.fileExists(atPath: dest.path) {
+            if fm.fileExists(atPath: dest.path) || (try? fm.attributesOfItem(atPath: dest.path)) != nil {
+                // Remove pre-existing entries (including stale symlinks).
                 try fm.removeItem(at: dest)
             }
-            try fm.copyItem(at: entry, to: dest)
+            switch mode {
+            case .symlinks:
+                try fm.createSymbolicLink(at: dest, withDestinationURL: entry)
+            case .copy:
+                try fm.copyItem(at: entry, to: dest)
+            }
         }
     }
 
