@@ -15,7 +15,14 @@ struct CLIRouter {
             MainActor.assumeIsolated { GUIEntry.run() }
             return
         }
-        Cider.main(Array(argv.dropFirst()))
+        // AsyncParsableCommand requires the parent's main() be awaited.
+        // Bridge from sync CiderApp.main() via DispatchSemaphore.
+        let semaphore = DispatchSemaphore(value: 0)
+        Task.detached {
+            await Cider.main(Array(argv.dropFirst()))
+            semaphore.signal()
+        }
+        semaphore.wait()
     }
 
     private static func shouldRunGUI(argv: [String]) -> Bool {
@@ -75,13 +82,7 @@ enum GUIEntry {
                 }
             }
             shell.run { _ in
-                guard let controller else {
-                    FileHandle.standardError.write(Data(
-                        "cider: configured bundle '\(env.bundleName)' has no splash image.\n".utf8))
-                    NSApplication.shared.terminate(nil)
-                    return
-                }
-                controller.attach()
+                controller?.attach()
                 runLaunchPipeline(
                     config: cfg,
                     bundleURL: env.bundleURL,
@@ -143,23 +144,27 @@ enum GUIEntry {
         config: CiderConfig,
         bundleURL: URL,
         bundleName: String,
-        splash: SplashController
+        splash: SplashController?
     ) {
         let pipeline = LaunchPipeline(
             config: config,
             bundleURL: bundleURL,
             bundleName: bundleName,
             progress: { title, detail, fraction in
+                FileHandle.standardError.write(Data(
+                    "• \(title)\(detail.isEmpty ? "" : ": \(detail)")\(fraction.map { String(format: "  (%.0f%%)", $0 * 100) } ?? "")\n".utf8))
+                guard let splash else { return }
                 Task { @MainActor in
                     splash.progress.show(title: title, detail: detail, fraction: fraction)
                 }
             },
             settle: {
                 Task { @MainActor in
-                    splash.progress.hide()
+                    splash?.progress.hide()
                 }
             },
             onError: { error in
+                FileHandle.standardError.write(Data("✗ launch failed: \(error)\n".utf8))
                 Task { @MainActor in
                     let alert = NSAlert()
                     alert.messageText = "Launch failed"
@@ -193,11 +198,11 @@ enum GUIEntry {
     }
 }
 
-struct Cider: ParsableCommand {
+struct Cider: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cider",
         abstract: "Cider — wrap Windows apps as macOS .app bundles via Wine.",
-        subcommands: [Apply.self, Clone.self, Config.self, Engines.self, PreviewSplash.self]
+        subcommands: [Apply.self, Clone.self, Config.self, Engines.self, Launch.self, PreviewSplash.self]
     )
 }
 
@@ -403,6 +408,50 @@ extension Cider {
                     FileHandle.standardOutput.write(Data("\(entry.name)\t\(entry.path.path)\n".utf8))
                 }
             }
+        }
+    }
+
+    // Diagnostic: runs the LaunchPipeline against this bundle's resolved
+    // config (in-bundle override → AppSupport-by-name) without showing
+    // the splash. Useful for shaking out wine launch problems without the
+    // GUI getting in the way. Wine output is echoed to stderr so the user
+    // can watch the trace.
+    struct Launch: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "launch",
+            abstract: "(diagnostic) Run the configured LaunchPipeline headlessly (no splash)."
+        )
+
+        func run() async throws {
+            let env = BundleEnvironment.resolve()
+            let store = ConfigStore(
+                inBundleConfigFile: env.inBundleConfigFile,
+                appSupportConfigFile: env.appSupportConfigFile
+            )
+            guard let resolved = try store.locate() else {
+                FileHandle.standardError.write(Data(
+                    "cider launch: no config for bundle '\(env.bundleName)'.\n".utf8))
+                throw ExitCode(1)
+            }
+            let pipeline = LaunchPipeline(
+                config: resolved.config,
+                bundleURL: env.bundleURL,
+                bundleName: env.bundleName,
+                progress: { title, detail, fraction in
+                    let pct = fraction.map { String(format: "  (%.0f%%)", $0 * 100) } ?? ""
+                    FileHandle.standardError.write(Data(
+                        "• \(title)\(detail.isEmpty ? "" : ": \(detail)")\(pct)\n".utf8))
+                },
+                settle: {
+                    FileHandle.standardError.write(Data("• game settled\n".utf8))
+                },
+                onError: { error in
+                    FileHandle.standardError.write(Data("✗ \(error)\n".utf8))
+                }
+            )
+            let exit = try await pipeline.runEndToEnd()
+            FileHandle.standardError.write(Data("• wine exited with status \(exit)\n".utf8))
+            throw ExitCode(exit)
         }
     }
 
