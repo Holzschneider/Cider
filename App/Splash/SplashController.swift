@@ -59,7 +59,12 @@ public final class SplashController {
     }
 
     // Convenience for callers that want both attach + run in one call.
+    // Stores a strong reference to the shell so NSApplication.delegate's
+    // weak slot stays valid for the whole event loop.
+    private var shell: AppShell?
     public func runEventLoop() {
-        AppShell().run { _ in self.attach() }
+        let shell = AppShell()
+        self.shell = shell
+        shell.run { _ in self.attach() }
     }
 }

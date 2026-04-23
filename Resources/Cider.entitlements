@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Hardened-runtime entitlements wine + DXMT/D3DMetal/MoltenVK need.
+        These come straight from the working Sikarugir / Whisky / CrossOver
+        models. Without them, hardened-runtime + library validation will
+        block wine's loaders, JIT, and the DYLD_FALLBACK_LIBRARY_PATH
+        we set in WineLauncher.
+
+        Cider deliberately does NOT request the App Sandbox entitlement —
+        wine spawns arbitrary child processes and uses syscalls a sandboxed
+        process can't. Notarization does not require the sandbox.
+    -->
+
+    <!-- Wine generates code at runtime (PE → JIT). -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- Wine loads unsigned Windows DLLs into its address space. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- WineLauncher sets DYLD_FALLBACK_LIBRARY_PATH so wine's font
+         driver / vulkan loader / etc. resolve template Frameworks. -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+</dict>
+</plist>

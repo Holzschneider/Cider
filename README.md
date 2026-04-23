@@ -1,120 +1,165 @@
 # Cider
 
-Bundle Windows apps into self-contained macOS `.app` wrappers using Wine.
+Wrap a Windows app as a self-contained, double-clickable macOS `.app`
+bundle backed by Wine.
 
-Cider takes a Windows app (as a `.zip` or a directory), a prebuilt
-[Sikarugir Wine engine](https://github.com/Sikarugir-App/Engines/releases), a
-graphics driver (DXMT, D3DMetal, or DXVK), and an icon — and produces a
-ready-to-run `.app` bundle:
+Cider is **one notarizable `Cider.app`** that is both a GUI launcher *and*
+a CLI tool. Drop a folder, `.zip`, or `cider.json` onto it; fill in the
+configuration form; click **Apply** (rename this bundle in place) or
+hold ⌥ for **Clone & Apply…** (save a configured copy elsewhere). The
+result is a `.app` that — on every launch — shows your splash, ensures
+the right Wine engine is downloaded, sets up a prefix in
+`~/Library/Application Support/Cider/Prefixes/<name>/`, and runs your
+Windows exe through Wine with all the env tweaks (MSYNC/ESYNC, DXMT
+DLLs in both arches, etc.) that real-world games need.
 
-```
-cider bundle \
-  --input ./MyGame.zip \
-  --exe "MyGame/Game.exe" \
-  --engine WS12WineCX24.0.7_7 \
-  --graphics d3dmetal \
-  --icon ./icon.png \
-  --name "My Game" \
-  --output "./My Game.app"
-```
+## Status
 
-The produced `.app` contains a pre-initialised Wine prefix, a copy of the
-engine, the Windows payload under `drive_c/Program Files/`, and a bash
-launcher. Drag-to-install it to another Mac and it runs.
+Architecture: in-place GUI rewrite. **10/11 planned phases shipped**.
+End-to-end verified against the Sikarugir Wine engines using a 32-bit
+Korean MMO patcher (RagnarokPlus). What's left is full Xcode-project
+migration + automated notarization (the build script + entitlements
+plist are in place; pulling the trigger on `notarytool` is gated on a
+$99 Apple Developer Program account).
 
-## Requirements
+## How it works
 
-- macOS 12 (Monterey) or newer. Most Wine engines require 13+ in practice.
-- Xcode 15+ (or Swift 5.9+ toolchain).
-- Command line tools: `sips`, `iconutil`, `codesign`, `tar`, `unzip` — all
-  shipped by macOS.
+The `.app` bundle is intentionally tiny — a single `cider` Mach-O plus
+an `Info.plist`. **All heavy state lives outside `Contents/`:**
 
-## Install
+| Lives in | What |
+| --- | --- |
+| `~/Library/Application Support/Cider/Engines/` | Sikarugir Wine engines, shared across configured `.app`s |
+| `…/Templates/` | Sikarugir wrapper templates (libinotify, libgnutls, MoltenVK, renderer DLLs) |
+| `…/Prefixes/<bundle-name>/` | The Wine prefix per game |
+| `…/Configs/<bundle-name>.json` | The per-bundle `cider.json` (default) |
+| `…/RuntimeStats/<bundle-name>.json` | Rolling stats for the splash's load-progress bar + slim-mode patcher hashes |
+| `…/Cache/Downloads/` | Slim-mode (URL) source payloads |
 
-```sh
-swift build -c release
-cp .build/release/cider /usr/local/bin/cider
-```
+The bundle's name (`Bundle.main.bundleURL.deletingPathExtension()
+.lastPathComponent`) is the key tying it to its config / prefix /
+stats. So renaming the bundle = pointing it at a different game.
 
-## Commands
+A bundle can also override AppSupport by placing
+`<bundle>/CiderConfig/cider.json` next to `Contents/`. That folder
+is a sibling of the signed/notarized `Contents/`, so it doesn't break
+codesign — distributors can ship a fully self-contained `.app`.
 
-```
-cider bundle              # Create a .app bundle from a Windows app
-cider engines list        # List cached Wine engines
-cider engines pull <name> # Download an engine into the cache
-cider inspect <bundle.app># Show metadata for a built bundle
-cider cache path          # Print cache root (~/Library/Caches/Cider)
-cider cache prune         # Clean up unreferenced engines
-```
+## Build
 
-## Config file (TOML)
-
-Pass `--with-config game.cider.toml` for reproducible builds:
-
-```toml
-[bundle]
-input = "./MyGame.zip"
-exe = "Game.exe"
-name = "My Game"
-bundle_id = "com.example.mygame"
-output = "./My Game.app"
-
-[engine]
-name = "WS12WineCX24.0.7_7"
-graphics = "dxmt"
-
-[launch]
-args = "--windowed --nosplash"
-
-[icon]
-path = "./icon.png"
-```
-
-## Graphics drivers
-
-| Driver     | Notes |
-| ---------- | ----- |
-| `d3dmetal` | Apple's / CrossOver's Metal-based D3D11/12 translator. Best on Apple Silicon when shipped by the engine. |
-| `dxmt`     | [3Shain/dxmt](https://github.com/3Shain/dxmt) — Metal-based D3D10/11 translator. Wide compatibility. |
-| `dxvk`     | Vulkan via MoltenVK. Use on Intel or when D3DMetal/DXMT misbehave. |
-
-Cider looks for the driver's DLLs inside the engine first; if the engine ships
-D3DMetal or DXMT, those are copied into `drive_c/windows/system32/` and the
-corresponding `WINEDLLOVERRIDES` are written into the launcher.
-
-## Signing
-
-By default Cider ad-hoc signs the produced bundle (`codesign --sign -`). This
-works on the signing Mac but will show a Gatekeeper warning elsewhere. For
-distribution, pass a Developer ID:
+The build system is Swift Package Manager.
 
 ```sh
-cider bundle ... --sign-identity "Developer ID Application: Your Name (TEAMID)"
+swift build -c release            # build the cider Mach-O
+./scripts/build-app.sh            # wrap it into a signed Cider.app
+swift test                        # run the test suite
 ```
 
-## Bundle layout
+`build-app.sh` produces an ad-hoc-signed `./build/Cider.app` with the
+hardened-runtime entitlements that wine + DXMT/MoltenVK need.
 
-```
-My Game.app/
-└── Contents/
-    ├── Info.plist
-    ├── PkgInfo
-    ├── MacOS/Launcher
-    └── Resources/
-        ├── AppIcon.icns
-        ├── engine/                  # copy of the Wine engine
-        ├── wineprefix/              # pre-initialised WINEPREFIX
-        │   └── drive_c/
-        │       ├── windows/system32/   # graphics driver DLLs
-        │       └── Program Files/<name>/
-        └── cider.json               # build metadata
+For Developer ID + notarization (after you have an Apple Developer
+account and a `notarytool` keychain profile set up):
+
+```sh
+./scripts/sign-and-notarize.sh \
+  --identity "Developer ID Application: Your Name (TEAMID)" \
+  --keychain-profile "AC_PASSWORD"
 ```
 
-## License & attribution
+See `scripts/sign-and-notarize.sh --help` for prereqs.
 
-Cider itself is open source (see `LICENSE`). Wine engines bundled into your
-`.app` carry the license of the engine producer — typically a mix of
-LGPL (Wine itself) and the engine vendor's terms (CrossOver's CXPatent
-restrictions for CrossOver-based engines). Cider does not redistribute
-engines; they are fetched at bundle time from
-[Sikarugir-App/Engines](https://github.com/Sikarugir-App/Engines/releases).
+## Configuration (`cider.json`)
+
+```json
+{
+  "schemaVersion": 1,
+  "displayName": "My Game",
+  "exe": "MyGame/Game.exe",
+  "args": ["/tui", "/log"],
+  "source": {
+    "mode": "path",
+    "path": "/Users/me/Games/MyGame"
+  },
+  "engine": {
+    "name": "WS12WineCX24.0.7_7",
+    "url": "https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineCX24.0.7_7.tar.xz"
+  },
+  "wrapperTemplate": {
+    "version": "1.0.11",
+    "url": "https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.11.tar.xz"
+  },
+  "graphics": "dxmt",
+  "wine": {
+    "esync": true, "msync": true,
+    "console": true, "inheritConsole": false,
+    "useWinedbg": false, "winetricks": []
+  },
+  "splash": { "file": "splash.png", "transparent": true },
+  "icon": "icon.icns"
+}
+```
+
+`source.mode` can be:
+- `"path"` — folder or `.zip` on disk; **referenced by symlink**, never
+  copied. Cider lazily extracts a `.zip` once into AppSupport.
+- `"inBundle"` — a sibling of `Contents/` inside this `.app`
+  (distributable mode).
+- `"url"` — fetched on first launch into AppSupport's download cache;
+  re-checked every launch via SHA-256 (or ETag/Last-Modified fallback)
+  so Cider doubles as a patcher.
+
+## CLI surface
+
+```
+cider                               # GUI: drop zone (no config) or splash (configured)
+cider apply       --config <path>   # in-place transmogrify, set custom icon, persist config
+cider clone       --to <path> ...   # save a configured copy
+cider config show                   # print the resolved cider.json
+cider engines list                  # what's cached under AppSupport/Engines/
+cider engines pull <name>           # download an engine
+cider launch                        # (diagnostic) run the LaunchPipeline headlessly
+cider preview-splash --image <p>    # (diagnostic) open the splash window only
+```
+
+## Layout
+
+```
+.
+├── App/                    # SwiftUI / AppKit GUI + CLI router
+│   ├── CiderApp.swift          # @main entry; dispatches CLI vs GUI
+│   ├── BundleEnvironment.swift # bundle URL / name / writability
+│   ├── AppShell.swift          # shared NSApplication + menu-bar setup
+│   ├── CLI/                    # ArgumentParser subcommands
+│   ├── DropZone/               # vanilla-bundle drag-drop window
+│   ├── More/                   # SwiftUI configuration form
+│   └── Splash/                 # borderless transparent splash + progress
+├── Core/                   # Engine/template/graphics/prefix/wine/etc.
+│   ├── EngineManager.swift     ├── TemplateManager.swift
+│   ├── GraphicsDriver.swift    ├── PrefixInitializer.swift
+│   ├── WineLauncher.swift      ├── ConsoleLineCounter.swift
+│   ├── LaunchPipeline.swift    ├── SourceResolver.swift
+│   ├── BundleTransmogrifier.swift
+│   ├── IconConverter.swift     ├── Downloader.swift
+│   ├── IntegrityChecker.swift  ├── ConfigStore.swift
+│   ├── AppSupport.swift        ├── Logger.swift
+│   └── Shell.swift
+├── Models/                 # CiderConfig + CiderRuntimeStats schemas
+├── Resources/Cider.entitlements    # hardened-runtime entitlements
+├── scripts/
+│   ├── build-app.sh        # SPM build → signed Cider.app
+│   └── sign-and-notarize.sh # Developer ID + notarytool + stapler
+├── Tests/CiderTests/       # XCTest suite (46+ tests)
+├── Package.swift
+└── README.md
+```
+
+## Acknowledgements
+
+- [Sikarugir-App](https://github.com/Sikarugir-App) for the prebuilt
+  Wine engines + wrapper templates Cider depends on.
+- [3Shain/dxmt](https://github.com/3Shain/dxmt), CrossOver/D3DMetal,
+  [doitsujin/dxvk](https://github.com/doitsujin/dxvk) for the graphics
+  translation layers.
+- [Whisky](https://github.com/Whisky-App/Whisky) and Kegworks for the
+  reference designs.
