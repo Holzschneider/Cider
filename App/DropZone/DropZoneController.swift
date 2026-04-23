@@ -54,16 +54,18 @@ final class DropZoneController {
     }
 
     private func openMoreDialog(prefill: CiderConfig?, dropped: DropZoneViewModel.DroppedSource) {
-        // Phase 9 lands the real form. Phase 8 surfaces a placeholder so
-        // the wiring is exercised end-to-end.
-        let alert = NSAlert()
-        alert.messageText = "More… (Phase 9)"
-        alert.informativeText =
-            "The full configuration form lands in the next phase. " +
-            "For now, drop a folder containing a cider.json or a bare cider.json " +
-            "to enable Apply."
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        let outcome = MoreDialogController.present(
+            prefill: prefill ?? vm.loadedConfig,
+            dropped: dropped == .none ? vm.dropped : dropped
+        )
+        switch outcome {
+        case .saved(let cfg, let storeInSource):
+            vm.loadedConfig = cfg
+            vm.storeInSourceFolderPreferred = storeInSource
+            vm.statusMessage = "Configured \"\(cfg.displayName)\" — click Apply to land it."
+        case .cancelled:
+            break
+        }
     }
 
     private func applyInPlace() {
@@ -84,13 +86,48 @@ final class DropZoneController {
         runTransmogrification(config: cfg, mode: .cloneTo(dest))
     }
 
+    // Decide where to write cider.json based on the user's MoreDialog
+    // preference + which source mode is active. "Store in source folder"
+    // only makes sense for mode=.path; otherwise we fall through to
+    // AppSupport.
+    private func computeStorage(for config: CiderConfig) -> BundleTransmogrifier.ConfigStorage {
+        if vm.storeInSourceFolderPreferred,
+           config.source.mode == .path,
+           let path = config.source.path {
+            let url = URL(fileURLWithPath: path)
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
+               isDir.boolValue {
+                return .sourceFolder(url)
+            }
+        }
+        return .appSupport
+    }
+
+    // If the configured icon path is a PNG (or non-icns), convert it to
+    // .icns once via IconConverter into a temp file and pass that to
+    // BundleTransmogrifier. nil if there's no icon configured.
+    private func resolveIcon(for config: CiderConfig) throws -> URL? {
+        guard let iconPath = config.icon, !iconPath.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: iconPath)
+        if url.pathExtension.lowercased() == "icns" {
+            return url
+        }
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cider-icon-\(UUID().uuidString).icns")
+        try IconConverter.convert(png: url, destination: tmp)
+        return tmp
+    }
+
     private func runTransmogrification(config: CiderConfig, mode: BundleTransmogrifier.Mode) {
         do {
+            let storage = computeStorage(for: config)
+            let icnsURL = try resolveIcon(for: config)
             let result = try BundleTransmogrifier(
                 currentBundle: bundleEnv.bundleURL,
                 config: config,
-                icnsURL: nil,                  // Phase 9 wires icon
-                storage: .appSupport,
+                icnsURL: icnsURL,
+                storage: storage,
                 allowOverwrite: false
             ).transmogrify(mode: mode)
 

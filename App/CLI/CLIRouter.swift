@@ -49,6 +49,28 @@ enum GUIEntry {
                 splashFile: splashURL,
                 transparentHint: cfg.splash?.transparent ?? false
             )
+            controller?.onDoubleClick = { [weak controller] in
+                let outcome = MoreDialogController.present(prefill: cfg, dropped: .none)
+                if case .saved(let updated, _) = outcome {
+                    // Persist back to the same source the config came from.
+                    do {
+                        switch resolved.source {
+                        case .inBundleOverride(let url):
+                            try updated.write(to: url)
+                        case .appSupport(let url):
+                            try updated.write(to: url)
+                        }
+                        // Cheapest "apply changes": tear down the splash so
+                        // the user can relaunch and see their edits.
+                        controller?.requestClose()
+                    } catch {
+                        let alert = NSAlert()
+                        alert.messageText = "Could not save updated configuration"
+                        alert.informativeText = String(describing: error)
+                        alert.runModal()
+                    }
+                }
+            }
             shell.run { _ in
                 if let controller {
                     controller.attach()
