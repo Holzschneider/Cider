@@ -11,6 +11,8 @@ struct BundleConfig: Codable {
     var bundleId: String
     var output: URL
     var preInitPrefix: Bool
+    var console: Bool
+    var inheritConsole: Bool
     var signIdentity: SignIdentity
 
     enum SignIdentity: Codable, Equatable {

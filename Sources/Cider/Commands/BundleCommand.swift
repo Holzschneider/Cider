@@ -45,6 +45,12 @@ struct BundleCommand: AsyncParsableCommand {
     @Flag(name: .customLong("no-prefix-init"), help: "Skip wineboot prefix initialisation.")
     var noPrefixInit: Bool = false
 
+    @Flag(name: .long, help: "Wrap the exe in cmd.exe /c run.bat with stdout redirected to all.txt. Use for console / TUI apps that crash without a real Windows console.")
+    var console: Bool = false
+
+    @Flag(name: .long, help: "With --console: prefix the exe with `start \"\" /B /WAIT` so it inherits cmd's text-mode console instead of allocating its own graphical conhost window. Suppresses the patcher's pop-up Windows terminal but may break apps whose child processes need their own window (wine propagates /B's CREATE_NO_WINDOW).")
+    var inheritConsole: Bool = false
+
     @OptionGroup var verbosity: VerbosityOptions
 
     func run() async throws {
@@ -110,6 +116,8 @@ struct BundleCommand: AsyncParsableCommand {
             bundleId: resolvedBundleId,
             output: outputURL,
             preInitPrefix: !noPrefixInit,
+            console: console,
+            inheritConsole: inheritConsole,
             signIdentity: sign
         )
     }

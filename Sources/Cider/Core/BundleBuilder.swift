@@ -91,6 +91,28 @@ struct BundleBuilder {
             ? "Program Files/\(config.name)"
             : "Program Files/\(config.name)/\(exeRelDir)"
 
+        // Console / TUI apps: emit a run.bat next to the exe with stdout
+        // redirected to all.txt, then have the launcher invoke
+        // `cmd.exe /c run.bat`. Without a real Windows console allocated by
+        // cmd.exe, console-subsystem (and some hybrid GUI/console) apps die
+        // in CRT init when they try to write to stdout.
+        let launchVariant: LauncherScript.LaunchVariant
+        if config.console {
+            let exeDirOnHost = prefix
+                .appendingPathComponent("drive_c")
+                .appendingPathComponent(exeWorkingDir)
+            try writeRunBat(
+                at: exeDirOnHost.appendingPathComponent("run.bat"),
+                winExePath: winExePath,
+                args: config.args,
+                inheritConsole: config.inheritConsole
+            )
+            let batWinPath = "C:\\\(exeWorkingDir.replacingOccurrences(of: "/", with: "\\"))\\run.bat"
+            launchVariant = .viaCmd(batWindowsPath: batWinPath)
+        } else {
+            launchVariant = .direct
+        }
+
         try LauncherScript.render(
             .init(
                 bundleId: config.bundleId,
@@ -98,6 +120,7 @@ struct BundleBuilder {
                 winExePath: winExePath,
                 exeWorkingDirRelativeToDriveC: exeWorkingDir,
                 exeArgs: config.args,
+                launch: launchVariant,
                 dllOverrides: graphicsResult.dllOverrides,
                 extraEnv: graphicsResult.extraEnv
             ),
@@ -141,6 +164,35 @@ struct BundleBuilder {
         // Use `cp -a` to preserve symlinks and permissions, which matters for
         // Wine engine payloads (they symlink wine64 → wine, etc.).
         try Shell.run("/bin/cp", ["-a", source.path, destination.path], captureOutput: true)
+    }
+
+    // Bat that cmd.exe /c will run.
+    //   - stdin from NUL so console-style "press any key" stdin reads return
+    //     EOF immediately. (Console-API reads bypass this; that is on the app.)
+    //   - stdout/stderr to all.txt so console-subsystem apps have a real
+    //     writable handle (the original reason we wrap in cmd at all).
+    //   - When inheritConsole is true, prefix with `start "" /B /WAIT`. This
+    //     mirrors Sikarugir and makes the exe inherit cmd's text-mode console
+    //     instead of allocating its own graphical conhost. Suppresses the
+    //     "Wine console" pop-up window but propagates CREATE_NO_WINDOW to the
+    //     exe's children — apps that spawn separate child windows (e.g. a
+    //     patcher launching a game) may break. Off by default.
+    private func writeRunBat(
+        at url: URL,
+        winExePath: String,
+        args: [String],
+        inheritConsole: Bool
+    ) throws {
+        let argLine = args.map { #""\#($0)""# }.joined(separator: " ")
+        let prefix = inheritConsole ? #"start "" /B /WAIT "# : ""
+        let bat = """
+        @echo off
+        \(prefix)\"\(winExePath)\" \(argLine) < NUL > all.txt 2>&1
+
+        """
+        // Bat files use CRLF and CP-1252-ish encoding by convention.
+        let crlf = bat.replacingOccurrences(of: "\n", with: "\r\n")
+        try Data(crlf.utf8).write(to: url)
     }
 
     private func copyContents(of source: URL, into destination: URL) throws {

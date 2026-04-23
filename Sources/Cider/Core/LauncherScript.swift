@@ -1,12 +1,23 @@
 import Foundation
 
 enum LauncherScript {
+    enum LaunchVariant {
+        // Default: wine executes the .exe directly with its arguments.
+        case direct
+        // Console / TUI apps: wine runs cmd.exe /c <run.bat>. The bat file is
+        // written into the prefix by BundleBuilder and contains the redirected
+        // exe invocation. Path is the Windows-style fully-qualified path to
+        // the bat file inside drive_c, e.g. "C:\\Program Files\\Foo\\run.bat".
+        case viaCmd(batWindowsPath: String)
+    }
+
     struct Substitutions {
         let bundleId: String
         let wineBinaryRelativePath: String  // path under Resources/engine/, e.g. "wswine.bundle/bin/wine"
         let winExePath: String              // e.g. "C:\\Program Files\\My Game\\Game.exe"
         let exeWorkingDirRelativeToDriveC: String  // e.g. "Program Files/My Game"
         let exeArgs: [String]
+        let launch: LaunchVariant
         let dllOverrides: String
         let extraEnv: [String: String]
     }
@@ -27,16 +38,12 @@ enum LauncherScript {
             with: escape(subs.wineBinaryRelativePath)
         )
         template = template.replacingOccurrences(
-            of: "@@WIN_EXE_PATH@@",
-            with: escape(subs.winExePath)
-        )
-        template = template.replacingOccurrences(
             of: "@@EXE_CWD_REL@@",
             with: escape(subs.exeWorkingDirRelativeToDriveC)
         )
         template = template.replacingOccurrences(
-            of: "@@EXE_ARGS@@",
-            with: subs.exeArgs.map { "\"\(escape($0))\"" }.joined(separator: " ")
+            of: "@@LAUNCH_LINE@@",
+            with: launchLine(subs)
         )
         template = template.replacingOccurrences(
             of: "@@WINEDLLOVERRIDES@@",
@@ -69,6 +76,23 @@ enum LauncherScript {
             [.posixPermissions: NSNumber(value: Int16(0o755))],
             ofItemAtPath: destination.path
         )
+    }
+
+    private static func launchLine(_ subs: Substitutions) -> String {
+        switch subs.launch {
+        case .direct:
+            let argList = subs.exeArgs
+                .map { "\"\(escape($0))\"" }
+                .joined(separator: " ")
+            return #""$WINE_BIN" \"# + "\n  " +
+                "\"\(escape(subs.winExePath))\" \(argList) \"$@\""
+        case .viaCmd(let batWindowsPath):
+            // cmd.exe /c "C:\\path\\run.bat" — the bat already encodes the
+            // exe + args + redirection, so we don't forward exeArgs here.
+            return #""$WINE_BIN" \"# + "\n  " +
+                #""C:\\windows\\system32\\cmd.exe" /c "# +
+                "\"\(escape(batWindowsPath))\""
+        }
     }
 
     private static func escape(_ s: String) -> String {
