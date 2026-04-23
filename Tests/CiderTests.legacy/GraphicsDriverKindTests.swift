@@ -1,5 +1,5 @@
 import XCTest
-@testable import CiderModels
+@testable import Cider
 
 final class GraphicsDriverKindTests: XCTestCase {
     func testAllCasesHaveOverrides() {
