@@ -27,9 +27,17 @@ rm -rf "$OUTPUT"
 mkdir -p "$OUTPUT/Contents/MacOS" "$OUTPUT/Contents/Resources"
 cp "$BIN" "$OUTPUT/Contents/MacOS/cider"
 
+# Bundle the default icon, if present.
+if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
+    cp "$ROOT/Resources/AppIcon.icns" "$OUTPUT/Contents/Resources/AppIcon.icns"
+    ICON_KEY="<key>CFBundleIconFile</key><string>AppIcon</string>"
+else
+    ICON_KEY=""
+fi
+
 # A minimal Info.plist that's hardened-runtime-friendly and gives wine
 # the entitlements it needs once we sign with Developer ID.
-cat > "$OUTPUT/Contents/Info.plist" <<'PLIST'
+cat > "$OUTPUT/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -48,6 +56,7 @@ cat > "$OUTPUT/Contents/Info.plist" <<'PLIST'
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+    ${ICON_KEY}
 </dict>
 </plist>
 PLIST
