@@ -77,6 +77,56 @@ struct Cider: ParsableCommand {
     )
 }
 
+// Shared between `apply` and `clone`. Resolves config + optional icon
+// (PNG → .icns conversion if needed), runs BundleTransmogrifier, and
+// reports the resulting paths.
+private func transmogrify(
+    configPath: String,
+    iconPath: String?,
+    storage: BundleTransmogrifier.ConfigStorage,
+    force: Bool,
+    mode: BundleTransmogrifier.Mode
+) throws {
+    let configURL = URL(fileURLWithPath: (configPath as NSString).expandingTildeInPath)
+    let cfg = try CiderConfig.read(from: configURL)
+
+    let env = BundleEnvironment.resolve()
+    var icnsURL: URL?
+    if let iconPath {
+        let iconURL = URL(fileURLWithPath: (iconPath as NSString).expandingTildeInPath)
+        if iconURL.pathExtension.lowercased() == "icns" {
+            icnsURL = iconURL
+        } else {
+            let tmpIcns = FileManager.default.temporaryDirectory
+                .appendingPathComponent("cider-icon-\(UUID().uuidString).icns")
+            try IconConverter.convert(png: iconURL, destination: tmpIcns)
+            icnsURL = tmpIcns
+        }
+    }
+
+    let result = try BundleTransmogrifier(
+        currentBundle: env.bundleURL,
+        config: cfg,
+        icnsURL: icnsURL,
+        storage: storage,
+        allowOverwrite: force
+    ).transmogrify(mode: mode)
+
+    let actionLabel: String
+    switch mode {
+    case .applyInPlace: actionLabel = "applied (in place)"
+    case .cloneTo: actionLabel = "cloned"
+    }
+    FileHandle.standardError.write(Data(
+        "cider: \(actionLabel) → \(result.finalBundleURL.path)\n".utf8))
+    FileHandle.standardError.write(Data(
+        "       config: \(result.configWrittenTo.path)\n".utf8))
+    if icnsURL != nil {
+        FileHandle.standardError.write(Data(
+            "       icon: \(result.iconApplied ? "applied" : "FAILED")\n".utf8))
+    }
+}
+
 extension Cider {
     struct Config: ParsableCommand {
         static let configuration = CommandConfiguration(
@@ -119,35 +169,90 @@ extension Cider {
         }
     }
 
-    // Apply, Clone, Engines are stubs landed for CLI shape; their bodies
-    // get filled in by Phases 6 and 7.
+    enum StorageOption: String, EnumerableFlag {
+        case appSupport
+        case inBundleOverride
+        var storage: BundleTransmogrifier.ConfigStorage {
+            switch self {
+            case .appSupport: return .appSupport
+            case .inBundleOverride: return .inBundleOverride
+            }
+        }
+        static func name(for value: Self) -> NameSpecification {
+            switch value {
+            case .appSupport: return [.customLong("app-support")]
+            case .inBundleOverride: return [.customLong("in-bundle")]
+            }
+        }
+        static func help(for value: Self) -> ArgumentHelp? {
+            switch value {
+            case .appSupport:
+                return "Store cider.json under ~/Library/Application Support/Cider/Configs/<bundle>.json (default)."
+            case .inBundleOverride:
+                return "Store cider.json inside the bundle as <bundle>/CiderConfig/cider.json."
+            }
+        }
+    }
+
     struct Apply: ParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "apply",
-            abstract: "(stub) In-place transmogrify this bundle from a cider.json."
+            abstract: "Transmogrify this bundle in place: rename it, set its custom icon, persist its cider.json."
         )
-        @Option(name: .shortAndLong, help: "Path to a cider.json file.")
+
+        @Option(name: .shortAndLong, help: "Path to the cider.json to apply.")
         var config: String
 
+        @Option(name: .long, help: "Pre-converted .icns to apply as the Finder custom icon.")
+        var icon: String?
+
+        @Flag(help: "Where to write cider.json.")
+        var storage: StorageOption = .appSupport
+
+        @Flag(name: .long, help: "Replace an existing target bundle / config without prompting.")
+        var force: Bool = false
+
         func run() throws {
-            FileHandle.standardError.write(Data(
-                "cider apply: not yet implemented (Phase 7). Would apply \(config).\n".utf8))
+            try transmogrify(
+                configPath: config,
+                iconPath: icon,
+                storage: storage.storage,
+                force: force,
+                mode: .applyInPlace
+            )
         }
     }
 
     struct Clone: ParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "clone",
-            abstract: "(stub) Clone this bundle to a new path with a cider.json applied."
+            abstract: "Clone this bundle to a new path with a cider.json applied. Original stays untouched."
         )
-        @Option(name: .shortAndLong, help: "Destination .app path.")
+
+        @Option(name: .shortAndLong, help: "Destination .app path (e.g. ~/Apps/MyGame.app).")
         var to: String
-        @Option(name: .shortAndLong, help: "Path to a cider.json file.")
+
+        @Option(name: .shortAndLong, help: "Path to the cider.json to apply.")
         var config: String
 
+        @Option(name: .long, help: "Pre-converted .icns to apply as the Finder custom icon.")
+        var icon: String?
+
+        @Flag(help: "Where to write cider.json.")
+        var storage: StorageOption = .appSupport
+
+        @Flag(name: .long, help: "Replace an existing destination without prompting.")
+        var force: Bool = false
+
         func run() throws {
-            FileHandle.standardError.write(Data(
-                "cider clone: not yet implemented (Phase 7). Would clone to \(to).\n".utf8))
+            let dest = URL(fileURLWithPath: (to as NSString).expandingTildeInPath)
+            try transmogrify(
+                configPath: config,
+                iconPath: icon,
+                storage: storage.storage,
+                force: force,
+                mode: .cloneTo(dest)
+            )
         }
     }
 
