@@ -16,21 +16,42 @@ public struct CiderRuntimeStats: Codable, Equatable {
     public var schemaVersion: Int
     public var prefixInitialised: Bool
     public var loadLineCount: LoadLineCount
-    public var lastVerifiedEngineSha: String?
-    public var lastVerifiedSourceSha: String?
+    public var engineCache: CachedArtifact?
+    public var templateCache: CachedArtifact?
+    public var sourceCache: CachedArtifact?
 
     public init(
         schemaVersion: Int = CiderRuntimeStats.currentSchemaVersion,
         prefixInitialised: Bool = false,
         loadLineCount: LoadLineCount = LoadLineCount(),
-        lastVerifiedEngineSha: String? = nil,
-        lastVerifiedSourceSha: String? = nil
+        engineCache: CachedArtifact? = nil,
+        templateCache: CachedArtifact? = nil,
+        sourceCache: CachedArtifact? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.prefixInitialised = prefixInitialised
         self.loadLineCount = loadLineCount
-        self.lastVerifiedEngineSha = lastVerifiedEngineSha
-        self.lastVerifiedSourceSha = lastVerifiedSourceSha
+        self.engineCache = engineCache
+        self.templateCache = templateCache
+        self.sourceCache = sourceCache
+    }
+
+    // Per-artifact provenance metadata used by IntegrityChecker for the
+    // slim-mode patcher recheck. sha256 is authoritative; etag /
+    // lastModified / bytes are heuristic fallbacks for HEAD-based change
+    // detection when the upstream URL has no sha pinned in cider.json.
+    public struct CachedArtifact: Codable, Equatable {
+        public var sha256: String
+        public var etag: String?
+        public var lastModified: String?
+        public var bytes: Int64
+
+        public init(sha256: String, etag: String? = nil, lastModified: String? = nil, bytes: Int64) {
+            self.sha256 = sha256
+            self.etag = etag
+            self.lastModified = lastModified
+            self.bytes = bytes
+        }
     }
 
     public struct LoadLineCount: Codable, Equatable {

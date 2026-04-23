@@ -45,7 +45,7 @@ final class CiderRuntimeStatsTests: XCTestCase {
     func testWriteAndRead() throws {
         var s = CiderRuntimeStats(prefixInitialised: true)
         s.loadLineCount.record(4321)
-        s.lastVerifiedEngineSha = "deadbeef"
+        s.engineCache = .init(sha256: "deadbeef", bytes: 1234)
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("cider-stats-\(UUID().uuidString).json")
