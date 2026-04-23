@@ -25,8 +25,9 @@ struct CLIRouter {
     }
 }
 
-// Default GUI flow: show splash if a config is found, otherwise print a
-// placeholder until Phase 8 lands the drop zone.
+// Default GUI flow:
+//   - config found      → splash window (and from there, Phase 10 launches wine)
+//   - config not found  → drop zone window (configure-and-apply UX)
 @MainActor
 enum GUIEntry {
     static func run() {
@@ -35,22 +36,32 @@ enum GUIEntry {
             inBundleConfigFile: env.inBundleConfigFile,
             appSupportConfigFile: env.appSupportConfigFile
         )
-        guard let resolved = try? store.locate() else {
-            FileHandle.standardError.write(Data(
-                "cider: no config for bundle '\(env.bundleName)'. Drop-zone window lands in Phase 8.\n".utf8))
-            return
+        let resolved = (try? store.locate()) ?? nil
+        let shell = AppShell()
+
+        if let resolved {
+            // Configured bundle → splash. Even without a configured splash
+            // image we still attach a small placeholder so the user sees
+            // *something* while the launch path warms up (Phase 10).
+            let cfg = resolved.config
+            let splashURL = splashURL(for: cfg, configSource: resolved.source)
+            let controller = SplashController.load(
+                splashFile: splashURL,
+                transparentHint: cfg.splash?.transparent ?? false
+            )
+            shell.run { _ in
+                if let controller {
+                    controller.attach()
+                } else {
+                    FileHandle.standardError.write(Data(
+                        "cider: configured bundle '\(env.bundleName)' has no splash image.\n".utf8))
+                }
+            }
+        } else {
+            // Unconfigured bundle → drop zone window.
+            let controller = DropZoneController(bundleEnv: env)
+            shell.run { _ in controller.attach() }
         }
-        let cfg = resolved.config
-        let splashURL = splashURL(for: cfg, configSource: resolved.source)
-        guard let controller = SplashController.load(
-            splashFile: splashURL,
-            transparentHint: cfg.splash?.transparent ?? false
-        ) else {
-            FileHandle.standardError.write(Data(
-                "cider: no splash image found for bundle '\(env.bundleName)'.\n".utf8))
-            return
-        }
-        controller.runEventLoop()
     }
 
     // Splash + icon paths in cider.json are resolved relative to the
