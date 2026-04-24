@@ -260,30 +260,55 @@ final class DropZoneController {
             //    to write a fresh one there.
             try wipeStaleInBundleConfig(at: bundle, keepingForBundleMode: plan.mode == .bundle)
 
-            // 3. Install (writes data + cider.json) when a fresh source
+            // 3. Phase-10 rename-on-Save: if the user changed the
+            //    Application Name AND we're editing an existing
+            //    install (no fresh source), move the AppSupport assets
+            //    to the new name *before* writing the new config.
+            //    For with-source applies the Installer writes fresh
+            //    data anyway, so we just clean up the old name in
+            //    step 6.
+            let oldName = previousAppSupportName(currentBundle: currentBundle, target: target)
+            let newName = BundleTransmogrifier.sanitiseBundleName(plan.config.displayName)
+            var effectiveConfig = plan.config
+            if plan.source == nil, let oldName, !oldName.isEmpty, oldName != newName {
+                progress(.stage("Renaming application", detail: "\(oldName) → \(newName)"))
+                effectiveConfig = try renameAppSupportAssets(
+                    from: oldName, to: newName,
+                    config: plan.config, mode: plan.mode
+                )
+            }
+
+            // 4. Install (writes data + cider.json) when a fresh source
             //    is provided. Otherwise just rewrite cider.json in place.
             if let source = plan.source {
                 _ = try await Installer().run(
                     source: source,
                     mode: plan.mode,
-                    baseConfig: plan.config,
+                    baseConfig: effectiveConfig,
                     bundleURL: bundle,
                     progress: progress
                 )
             } else {
                 progress(.stage("Writing configuration", detail: ""))
-                let configURL = configURL(for: plan, bundle: bundle)
-                try plan.config.write(to: configURL)
+                let target = configURL(forName: newName, mode: plan.mode, bundle: bundle)
+                try effectiveConfig.write(to: target)
             }
 
-            // 4. Apply Finder custom icon (sibling of Contents/, signature-safe).
+            // 5. With-source orphan cleanup: a fresh install under a new
+            //    name leaves the old AppSupport entries behind. Remove
+            //    them now that the new ones are in place.
+            if plan.source != nil, let oldName, !oldName.isEmpty, oldName != newName {
+                cleanupOrphanedAppSupport(name: oldName, mode: plan.mode)
+            }
+
+            // 6. Apply Finder custom icon (sibling of Contents/, signature-safe).
             if let icnsURL {
                 progress(.stage("Applying icon", detail: ""))
                 _ = IconConverter.applyAsCustomIcon(at: icnsURL, to: bundle)
             }
 
-            // 5. Rename in-place bundles to <DisplayName>.app. Clone-to
-            //    bundles use the user-picked filename as-is.
+            // 7. Rename in-place bundles to <Application Name>.app.
+            //    Clone-to bundles use the user-picked filename as-is.
             let final: URL
             if case .applyInPlace = target {
                 final = try renameToDisplayName(bundle, displayName: plan.config.displayName)
@@ -305,7 +330,7 @@ final class DropZoneController {
         }
     }
 
-    static func wipeStaleInBundleConfig(at bundle: URL, keepingForBundleMode: Bool) throws {
+    nonisolated static func wipeStaleInBundleConfig(at bundle: URL, keepingForBundleMode: Bool) throws {
         let staleCider = bundle.appendingPathComponent("cider.json")
         if !keepingForBundleMode, FileManager.default.fileExists(atPath: staleCider.path) {
             try FileManager.default.removeItem(at: staleCider)
@@ -317,17 +342,100 @@ final class DropZoneController {
         }
     }
 
-    static func configURL(for plan: InstallPlan, bundle: URL) -> URL {
-        switch plan.mode {
+    nonisolated static func configURL(for plan: InstallPlan, bundle: URL) -> URL {
+        let name = BundleTransmogrifier.sanitiseBundleName(plan.config.displayName)
+        return configURL(forName: name, mode: plan.mode, bundle: bundle)
+    }
+
+    nonisolated static func configURL(forName name: String, mode: InstallMode, bundle: URL) -> URL {
+        switch mode {
         case .bundle:
             return bundle.appendingPathComponent("cider.json")
         case .install, .link:
-            let name = BundleTransmogrifier.sanitiseBundleName(plan.config.displayName)
             return AppSupport.config(forBundleNamed: name)
         }
     }
 
-    static func renameToDisplayName(_ bundle: URL, displayName: String) throws -> URL {
+    // MARK: - Phase 10: rename-on-Save helpers
+
+    // Returns the AppSupport key the running bundle currently uses
+    // (its filename stem), or nil for the vanilla `Cider` bundle and
+    // for Create flows (cloning starts a fresh slot, not a rename).
+    nonisolated static func previousAppSupportName(currentBundle: URL, target: ApplyTarget) -> String? {
+        guard case .applyInPlace = target else { return nil }
+        let stem = currentBundle.deletingPathExtension().lastPathComponent
+        return stem == "Cider" ? nil : stem
+    }
+
+    // Moves the AppSupport assets from <oldName> to <newName> and
+    // returns a config with `applicationPath` re-pointed at the new
+    // location (Install mode only — Link's path is external, Bundle
+    // doesn't use AppSupport for its config).
+    @discardableResult
+    nonisolated static func renameAppSupportAssets(
+        from oldName: String,
+        to newName: String,
+        config: CiderConfig,
+        mode: InstallMode
+    ) throws -> CiderConfig {
+        let fm = FileManager.default
+        var updated = config
+
+        switch mode {
+        case .install:
+            let oldDir = AppSupport.programFiles(forBundleNamed: oldName)
+            let newDir = AppSupport.programFiles(forBundleNamed: newName)
+            if fm.fileExists(atPath: oldDir.path) {
+                if fm.fileExists(atPath: newDir.path) {
+                    throw OrchestratorError.targetExists(newDir)
+                }
+                try fm.createDirectory(
+                    at: newDir.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try fm.moveItem(at: oldDir, to: newDir)
+            }
+            updated.applicationPath = newDir.standardizedFileURL.path
+        case .link:
+            // Link points at an external folder — nothing to move.
+            break
+        case .bundle:
+            // Bundle's data lives inside the .app, not AppSupport.
+            break
+        }
+
+        // Move the cider.json file too. If the old config doesn't exist
+        // (e.g. first edit after manual rename), that's fine — we'll
+        // just write the new one.
+        let oldCfg = AppSupport.config(forBundleNamed: oldName)
+        let newCfg = AppSupport.config(forBundleNamed: newName)
+        if fm.fileExists(atPath: oldCfg.path), !fm.fileExists(atPath: newCfg.path) {
+            try fm.createDirectory(
+                at: newCfg.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fm.moveItem(at: oldCfg, to: newCfg)
+        }
+        return updated
+    }
+
+    // Removes the AppSupport entries belonging to `name`. Called after a
+    // with-source apply renamed the application — the Installer wrote
+    // fresh data under the new name, so the old slot is orphaned.
+    // Best-effort: silently ignore missing files / errors. Bundle mode
+    // doesn't touch AppSupport, so this is a no-op for it.
+    nonisolated static func cleanupOrphanedAppSupport(name: String, mode: InstallMode) {
+        let fm = FileManager.default
+        switch mode {
+        case .install:
+            try? fm.removeItem(at: AppSupport.programFiles(forBundleNamed: name))
+        case .link, .bundle:
+            break
+        }
+        try? fm.removeItem(at: AppSupport.config(forBundleNamed: name))
+    }
+
+    nonisolated static func renameToDisplayName(_ bundle: URL, displayName: String) throws -> URL {
         let targetName = BundleTransmogrifier.sanitiseBundleName(displayName)
         guard !targetName.isEmpty else {
             throw OrchestratorError.emptyDisplayName
@@ -350,7 +458,7 @@ final class DropZoneController {
         var description: String {
             switch self {
             case .emptyDisplayName:
-                return "Display name is empty — fill it in via More… first."
+                return "Application Name is empty — fill it in via More… first."
             case .targetExists(let url):
                 return "A bundle already exists at \(url.path). Pick a different name or remove the existing one."
             }

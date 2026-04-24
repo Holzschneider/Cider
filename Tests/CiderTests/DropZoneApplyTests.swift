@@ -234,6 +234,168 @@ final class DropZoneApplyTests: XCTestCase {
             "stale in-bundle cider.json must be wiped for non-Bundle modes")
     }
 
+    // MARK: - Phase 10 rename-on-Save
+
+    func testNoSourceRenameInstallMovesProgramFilesAndConfig() async throws {
+        // Pre-seed an existing "OldName" Install: data under
+        // Program Files/OldName/ and a config in Configs/OldName.json.
+        let oldName = "OldRenameTest-\(UUID().uuidString.prefix(8))"
+        let newName = displayName  // tearDown cleans this up
+        let oldDir = AppSupport.programFiles(forBundleNamed: oldName)
+        try FileManager.default.createDirectory(at: oldDir, withIntermediateDirectories: true)
+        try Data("blob".utf8).write(to: oldDir.appendingPathComponent("payload.bin"))
+        defer {
+            try? FileManager.default.removeItem(at: oldDir)
+            try? FileManager.default.removeItem(at: AppSupport.programFiles(forBundleNamed: oldName))
+            try? FileManager.default.removeItem(at: AppSupport.config(forBundleNamed: oldName))
+        }
+        let oldConfig = sampleConfig(applicationPath: oldDir.standardizedFileURL.path,
+                                     exe: "payload.bin")
+        var seedConfig = oldConfig
+        seedConfig.displayName = oldName
+        try seedConfig.write(to: AppSupport.config(forBundleNamed: oldName))
+
+        // Stand the running bundle in as `OldName.app` so the orchestrator
+        // sees this as a rename rather than a fresh install.
+        let renamedBundle = fakeBundleParent.appendingPathComponent("\(oldName).app",
+                                                                    isDirectory: true)
+        try FileManager.default.moveItem(at: fakeBundle, to: renamedBundle)
+
+        // The plan keeps the same applicationPath value coming in
+        // (load() preserves it) — performApply's rename step rewrites it.
+        var planConfig = oldConfig
+        planConfig.displayName = newName
+        let plan = InstallPlan(config: planConfig, mode: .install, source: nil)
+
+        let final = try await DropZoneController.performApply(
+            plan: plan,
+            target: .applyInPlace,
+            currentBundle: renamedBundle,
+            icnsURL: nil,
+            progress: { _ in }
+        )
+
+        // Bundle renamed.
+        XCTAssertEqual(final.lastPathComponent, "\(newName).app")
+
+        // Data moved from Program Files/OldName/ to Program Files/<newName>/.
+        let newDir = AppSupport.programFiles(forBundleNamed: newName)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: newDir.appendingPathComponent("payload.bin").path),
+            "Program Files data must move to the new name")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldDir.path),
+                       "Old Program Files dir must be gone after rename")
+
+        // Config moved AND updated (applicationPath now points at new dir).
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: AppSupport.config(forBundleNamed: oldName).path))
+        let written = try CiderConfig.read(from: AppSupport.config(forBundleNamed: newName))
+        XCTAssertEqual(written.displayName, newName)
+        XCTAssertEqual(written.applicationPath, newDir.standardizedFileURL.path,
+                       "applicationPath rewritten to point at the new Program Files dir")
+    }
+
+    func testNoSourceRenameLinkMovesOnlyTheConfig() async throws {
+        let oldName = "OldLinkTest-\(UUID().uuidString.prefix(8))"
+        let newName = displayName
+        let externalFolder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cider-link-target-\(UUID().uuidString)",
+                                    isDirectory: true)
+        try FileManager.default.createDirectory(at: externalFolder, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: externalFolder)
+            try? FileManager.default.removeItem(at: AppSupport.config(forBundleNamed: oldName))
+        }
+        let oldCfg = sampleConfig(applicationPath: externalFolder.path)
+        var seedCfg = oldCfg
+        seedCfg.displayName = oldName
+        try seedCfg.write(to: AppSupport.config(forBundleNamed: oldName))
+
+        let renamedBundle = fakeBundleParent.appendingPathComponent("\(oldName).app",
+                                                                    isDirectory: true)
+        try FileManager.default.moveItem(at: fakeBundle, to: renamedBundle)
+
+        var planConfig = oldCfg
+        planConfig.displayName = newName
+        let plan = InstallPlan(config: planConfig, mode: .link, source: nil)
+
+        _ = try await DropZoneController.performApply(
+            plan: plan,
+            target: .applyInPlace,
+            currentBundle: renamedBundle,
+            icnsURL: nil,
+            progress: { _ in }
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: AppSupport.config(forBundleNamed: oldName).path))
+        let written = try CiderConfig.read(from: AppSupport.config(forBundleNamed: newName))
+        XCTAssertEqual(written.displayName, newName)
+        // External folder unchanged (Link doesn't move user data).
+        XCTAssertEqual(written.applicationPath, externalFolder.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: externalFolder.path))
+    }
+
+    func testWithSourceRenameCleansUpOldAppSupportEntries() async throws {
+        // Pre-seed an existing "OldName" Install we'll be renaming away
+        // from with a fresh source.
+        let oldName = "OldOrphanTest-\(UUID().uuidString.prefix(8))"
+        let oldDir = AppSupport.programFiles(forBundleNamed: oldName)
+        try FileManager.default.createDirectory(at: oldDir, withIntermediateDirectories: true)
+        try Data("stale".utf8).write(to: oldDir.appendingPathComponent("stale.bin"))
+        defer {
+            try? FileManager.default.removeItem(at: oldDir)
+            try? FileManager.default.removeItem(at: AppSupport.config(forBundleNamed: oldName))
+        }
+        try sampleConfig(applicationPath: oldDir.path).write(
+            to: AppSupport.config(forBundleNamed: oldName))
+
+        let renamedBundle = fakeBundleParent.appendingPathComponent("\(oldName).app",
+                                                                    isDirectory: true)
+        try FileManager.default.moveItem(at: fakeBundle, to: renamedBundle)
+
+        let folder = try makeFolder(named: "Game", files: ["start.exe": "x"])
+        let plan = InstallPlan(
+            config: sampleConfig(),  // displayName = self.displayName (the new name)
+            mode: .install,
+            source: .folder(folder)
+        )
+        _ = try await DropZoneController.performApply(
+            plan: plan,
+            target: .applyInPlace,
+            currentBundle: renamedBundle,
+            icnsURL: nil,
+            progress: { _ in }
+        )
+
+        // Old AppSupport entries are gone.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldDir.path),
+                       "old Program Files dir must be cleaned up after rename")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: AppSupport.config(forBundleNamed: oldName).path),
+            "old config must be cleaned up after rename")
+
+        // New entries are in place.
+        let newDir = AppSupport.programFiles(forBundleNamed: displayName)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: newDir.appendingPathComponent("Game/start.exe").path))
+    }
+
+    func testFreshInstallFromVanillaCiderHasNoOldNameToCleanUp() async throws {
+        // Sanity: the bundle is "Cider.app", the orchestrator must NOT
+        // try to clean up Configs/Cider.json or Program Files/Cider/.
+        let folder = try makeFolder(named: "Game", files: ["start.exe": "x"])
+        let plan = InstallPlan(config: sampleConfig(), mode: .install, source: .folder(folder))
+
+        XCTAssertNil(DropZoneController.previousAppSupportName(
+            currentBundle: fakeBundle, target: .applyInPlace))
+
+        _ = try await DropZoneController.performApply(
+            plan: plan, target: .applyInPlace,
+            currentBundle: fakeBundle, icnsURL: nil, progress: { _ in }
+        )
+    }
+
     func testApplyBundleKeepsInBundleCiderJSON() async throws {
         // Pre-seed too — Bundle mode rewrites it; just make sure we don't
         // accidentally delete it before the Installer writes the new one.

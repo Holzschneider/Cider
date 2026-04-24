@@ -343,7 +343,7 @@ public struct Installer {
             case .urlSourceNotResolved:
                 return "Internal error: URL source should have been resolved before dispatch."
             case .invalidDisplayName:
-                return "Display name is empty."
+                return "Application Name is empty."
             }
         }
     }

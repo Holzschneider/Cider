@@ -278,7 +278,7 @@ final class MoreDialogViewModel: ObservableObject {
 
     var displayNameError: String? {
         displayName.trimmingCharacters(in: .whitespaces).isEmpty
-            ? "Display name is required."
+            ? "Application Name is required."
             : nil
     }
 

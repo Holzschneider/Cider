@@ -85,7 +85,7 @@ struct MoreDialogView: View {
 
     private var basicSection: some View {
         section("Basic") {
-            row("Display name", error: vm.displayNameError) {
+            row("Application Name", error: vm.displayNameError) {
                 TextField("My Windows Game", text: $vm.displayName)
                     .textFieldStyle(DialogTextFieldStyle())
             }
