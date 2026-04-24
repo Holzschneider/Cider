@@ -23,24 +23,27 @@ final class DropZoneController {
     func attach() {
         let view = DropZoneView(vm: vm)
         let host = NSHostingController(rootView: view)
-        let window = NSWindow(contentViewController: host)
-        window.styleMask = [.titled, .closable, .miniaturizable]
+
+        // Ask the SwiftUI view what size it actually wants BEFORE we
+        // build the window, so the window opens at its final size in
+        // a single pass — no post-show reflow, no visible "jump".
+        let preferredSize = host.sizeThatFits(
+            in: NSSize(width: CGFloat.greatestFiniteMagnitude,
+                       height: CGFloat.greatestFiniteMagnitude)
+        )
+
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: preferredSize),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = host
         window.title = "Cider"
         window.isReleasedWhenClosed = false
+        window.setFrameOrigin(centeredOrigin(for: window))
         self.window = window
         window.makeKeyAndOrderFront(nil)
-
-        // SwiftUI's NSHostingController reflows the window's content size
-        // after the window comes onscreen, so any centering we do BEFORE
-        // makeKeyAndOrderFront is computed against a pre-layout frame and
-        // ends up a few pixels off. Force a layout pass, then centre.
-        host.view.layoutSubtreeIfNeeded()
-        centerOnScreen(window)
-        // Defer one more pass to next runloop tick so any post-show
-        // resize from SwiftUI is also accounted for.
-        DispatchQueue.main.async { [weak self] in
-            self?.centerOnScreen(window)
-        }
 
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak vm] event in
             vm?.isOptionPressed = event.modifierFlags.contains(.option)
@@ -48,22 +51,18 @@ final class DropZoneController {
         }
     }
 
-    // NSWindow.center() biases the window toward the upper third of the
-    // screen ("alert area" convention). For a primary window we want true
-    // geometric centering against the visible area (excluding menu bar
-    // and Dock).
-    private func centerOnScreen(_ window: NSWindow) {
-        guard let screen = window.screen ?? NSScreen.main else {
-            window.center()
-            return
-        }
-        let visible = screen.visibleFrame
+    // Geometric centre against the visible area (excluding menu bar and
+    // Dock). NSWindow.center() biases toward the upper third on purpose
+    // ("alert area" convention) which isn't what we want for a primary
+    // window.
+    private func centeredOrigin(for window: NSWindow) -> NSPoint {
+        let screen = window.screen ?? NSScreen.main
+        let visible = screen?.visibleFrame ?? .zero
         let frame = window.frame
-        let origin = NSPoint(
+        return NSPoint(
             x: (visible.midX - frame.width / 2).rounded(),
             y: (visible.midY - frame.height / 2).rounded()
         )
-        window.setFrameOrigin(origin)
     }
 
     deinit {
