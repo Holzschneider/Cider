@@ -63,8 +63,8 @@ enum GUIEntry {
                 transparentHint: cfg.splash?.transparent ?? false
             )
             controller?.onDoubleClick = { [weak controller] in
-                let outcome = MoreDialogController.present(prefill: cfg, dropped: .none)
-                if case .saved(let updated, _) = outcome {
+                MoreDialogController.present(prefill: cfg, dropped: .none) { outcome in
+                    guard case .saved(let updated, _) = outcome else { return }
                     do {
                         switch resolved.source {
                         case .inBundleOverride(let url):

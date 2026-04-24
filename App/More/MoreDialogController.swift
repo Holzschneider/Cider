@@ -3,54 +3,55 @@ import AppKit
 import SwiftUI
 import CiderModels
 
-// Hosts MoreDialogView in its own NSWindow and presents it modally via
-// NSApp.runModal. Returns the user's choice synchronously so callers
-// (DropZone "More…" button, Splash double-click) can drive the next step.
+// Hosts MoreDialogView in its own NSWindow and presents it as a SHEET on
+// the calling window (drop zone / splash). Sheet-based presentation is
+// the only way SwiftUI controls behave reliably here — NSApp.runModal
+// hosting causes SwiftUI buttons to render but never fire, leaving the
+// dialog stuck. Callback-based since beginSheet is async.
 @MainActor
 final class MoreDialogController: NSObject, NSWindowDelegate {
     let vm = MoreDialogViewModel()
     private var window: NSWindow?
-    private var outcome: Outcome = .cancelled
+    private var completion: ((Outcome) -> Void)?
+
+    // Static strong reference so the controller outlives the present()
+    // call. Cleared in finish().
+    private static var active: MoreDialogController?
 
     enum Outcome {
         case saved(CiderConfig, storeInSourceFolder: Bool)
         case cancelled
     }
 
-    static func present(prefill: CiderConfig?, dropped: DropZoneViewModel.DroppedSource) -> Outcome {
+    static func present(
+        prefill: CiderConfig?,
+        dropped: DropZoneViewModel.DroppedSource,
+        completion: @escaping (Outcome) -> Void
+    ) {
+        // Re-entrancy guard: ignore if a dialog is already up.
+        guard active == nil else { return }
         let controller = MoreDialogController()
-        if let prefill {
-            controller.vm.load(from: prefill)
-        }
+        if let prefill { controller.vm.load(from: prefill) }
         controller.vm.seed(fromDrop: dropped)
-        return controller.runModal()
+        controller.completion = completion
+        active = controller
+        controller.show()
     }
 
-    private func runModal() -> Outcome {
-        // Capture the soon-to-be-displaced key window (typically the
-        // drop-zone) so we can centre our modal *on* it rather than at
-        // the middle of the screen.
-        let parentWindow = NSApp.keyWindow
-
+    private func show() {
         let view = MoreDialogView(
             vm: vm,
-            onCancel: { [weak self] in
-                self?.outcome = .cancelled
-                self?.endModal()
-            },
-            onSave: { [weak self] cfg in
-                self?.outcome = .saved(cfg, storeInSourceFolder: self?.vm.storeInSourceFolder ?? false)
-                self?.endModal()
+            // STRONG self — the controller is pinned alive by Self.active
+            // for the lifetime of the dialog. This was the second bug
+            // contributing to "buttons don't work": [weak self] meant the
+            // closures became no-ops when the controller hit the autorelease
+            // pool early.
+            onCancel: { self.finish(.cancelled) },
+            onSave: { cfg in
+                self.finish(.saved(cfg, storeInSourceFolder: self.vm.storeInSourceFolder))
             }
         )
         let host = NSHostingController(rootView: view)
-
-        // Build the window with the right style mask up-front (mutating
-        // it after a default init is the source of the focus/cursor
-        // weirdness — first responder gets stuck on whatever the default
-        // style attached). .resizable so the user can grow it.
-        // Width matches the design's 620pt; height a bit taller to fit
-        // all sections without scrolling on a typical display.
         let initialSize = NSSize(width: 620, height: 760)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: initialSize),
@@ -62,57 +63,38 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
         window.title = "Cider — Configuration"
         window.isReleasedWhenClosed = false
         window.delegate = self
-        // Force a dark titlebar/back-chrome to match the design palette.
         window.appearance = NSAppearance(named: .darkAqua)
-        window.titlebarAppearsTransparent = false
-        // Force the content area to our explicit size — NSHostingController
-        // otherwise picks the SwiftUI MIN size, clipping the buttons.
         window.setContentSize(initialSize)
-
-        // Position the modal window centred on the parent (drop zone /
-        // splash) instead of the middle of the screen, so the user's eye
-        // doesn't have to jump.
-        positionWindow(window, centeredOn: parentWindow)
         self.window = window
 
-        // Make sure the modal window actually becomes key BEFORE runModal
-        // hands control to NSApp's modal session — otherwise SwiftUI
-        // TextFields stay non-key and won't show a cursor or accept paste.
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-        NSApp.runModal(for: window)
-        window.orderOut(nil)
-        return outcome
-    }
-
-    private func positionWindow(_ window: NSWindow, centeredOn parent: NSWindow?) {
-        let frame = window.frame
-        let target: NSRect
-        if let parent {
-            target = parent.frame
-        } else if let screen = NSScreen.main {
-            target = screen.visibleFrame
+        // Sheet attached to whichever window is currently key (drop zone
+        // or splash). Falls back to a regular ordered-front window if no
+        // parent — the controller still hangs on to itself via Self.active
+        // and the user can close it via the close-X / Cancel.
+        if let parent = NSApp.keyWindow {
+            parent.beginSheet(window) { _ in /* no-op; finish() drives outcome */ }
         } else {
             window.center()
-            return
+            window.makeKeyAndOrderFront(nil)
         }
-        let origin = NSPoint(
-            x: target.midX - frame.width / 2,
-            y: target.midY - frame.height / 2
-        )
-        window.setFrameOrigin(origin)
     }
 
-    private func endModal() {
-        NSApp.stopModal()
+    private func finish(_ outcome: Outcome) {
+        let cb = completion
+        completion = nil
+        if let parent = window?.sheetParent, let w = window {
+            parent.endSheet(w)
+        }
+        window?.close()
+        window = nil
+        Self.active = nil
+        cb?(outcome)
     }
 
-    // The red close button ("X") doesn't go through onCancel — handle it
-    // here so the modal session ends and the parent (drop zone) regains
-    // input. Treat close-via-X as a cancel.
+    // Red close-button: treat as cancel, end the sheet cleanly.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        outcome = .cancelled
-        endModal()
-        return true
+        finish(.cancelled)
+        return false   // we already closed/ended; tell AppKit not to
+                       // double-process by returning false
     }
 }

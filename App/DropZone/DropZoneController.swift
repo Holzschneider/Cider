@@ -27,7 +27,7 @@ final class DropZoneController {
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.title = "Cider"
         window.isReleasedWhenClosed = false
-        positionAtTopCenter(window)
+        window.center()
         self.window = window
         window.makeKeyAndOrderFront(nil)
 
@@ -35,22 +35,6 @@ final class DropZoneController {
             vm?.isOptionPressed = event.modifierFlags.contains(.option)
             return event
         }
-    }
-
-    // Centred horizontally; top edge just under the menu bar with a small
-    // breathing margin. Falls back to NSWindow.center() if no screen.
-    private func positionAtTopCenter(_ window: NSWindow, topMargin: CGFloat = 24) {
-        guard let screen = NSScreen.main else {
-            window.center()
-            return
-        }
-        let visible = screen.visibleFrame
-        let frame = window.frame
-        let origin = NSPoint(
-            x: visible.midX - frame.width / 2,
-            y: visible.maxY - frame.height - topMargin
-        )
-        window.setFrameOrigin(origin)
     }
 
     deinit {
@@ -70,17 +54,19 @@ final class DropZoneController {
     }
 
     private func openMoreDialog(prefill: CiderConfig?, dropped: DropZoneViewModel.DroppedSource) {
-        let outcome = MoreDialogController.present(
+        MoreDialogController.present(
             prefill: prefill ?? vm.loadedConfig,
             dropped: dropped == .none ? vm.dropped : dropped
-        )
-        switch outcome {
-        case .saved(let cfg, let storeInSource):
-            vm.loadedConfig = cfg
-            vm.storeInSourceFolderPreferred = storeInSource
-            vm.statusMessage = "Configured \"\(cfg.displayName)\" — click Apply to land it."
-        case .cancelled:
-            break
+        ) { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .saved(let cfg, let storeInSource):
+                self.vm.loadedConfig = cfg
+                self.vm.storeInSourceFolderPreferred = storeInSource
+                self.vm.statusMessage = "Configured \"\(cfg.displayName)\" — click Apply to land it."
+            case .cancelled:
+                break
+            }
         }
     }
 
