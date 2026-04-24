@@ -86,9 +86,10 @@ final class DropZoneController {
         ) { [weak self] outcome in
             guard let self else { return }
             switch outcome {
-            case .saved(let cfg):
-                self.vm.loadedConfig = cfg
-                self.vm.statusMessage = "Configured \"\(cfg.displayName)\" — click Apply to land it."
+            case .saved(let plan):
+                self.vm.loadedConfig = plan.config
+                self.vm.installPlan = plan
+                self.vm.statusMessage = "Configured \"\(plan.config.displayName)\" (mode: \(plan.mode.rawValue)) — click Apply to land it."
             case .cancelled:
                 break
             }

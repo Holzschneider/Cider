@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import AppKit
 import CiderModels
+import CiderCore
 
 // Implements the design from cider-settings-dialog/project/Wine Wrapper
 // Configuration.html — macOS-y dark dialog, 620pt wide, 172pt right-aligned
@@ -10,7 +11,7 @@ import CiderModels
 struct MoreDialogView: View {
     @ObservedObject var vm: MoreDialogViewModel
     var onCancel: () -> Void
-    var onSave: (CiderConfig) -> Void
+    var onSave: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -64,16 +65,63 @@ struct MoreDialogView: View {
 
     private var sourceSection: some View {
         section("Application") {
-            row("Path",
-                help: "Absolute path → Link mode (run in place). Relative → resolved against the cider.json's location (Install or Bundle mode). Phase 6 turns this into the proper install-mode picker.") {
-                pathPicker(text: $vm.applicationPath,
-                           placeholder: "/Users/me/Games/MyGame",
-                           filter: .anyContent)
+            row("Install mode", help: installModeHelp) {
+                Picker("", selection: $vm.installMode) {
+                    Text("Install").tag(InstallMode.install)
+                    Text("Bundle").tag(InstallMode.bundle)
+                    Text("Link").tag(InstallMode.link)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+            row("Source", help: sourceFieldHelp) {
+                pathPicker(text: $vm.sourcePath,
+                           placeholder: sourceFieldPlaceholder,
+                           filter: vm.installMode == .link ? .folderOnly : .anyContent)
+            }
+            if vm.installMode != .link
+               && !vm.applicationPath.trimmingCharacters(in: .whitespaces).isEmpty {
+                row(" ") {
+                    Text("Already installed at: \(vm.applicationPath)")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(DialogTheme.textMuted)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             row("Origin URL", help: "Optional — set automatically when a remote cider.json was dropped.") {
                 TextField("(none)", text: $vm.originURL)
                     .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
+        }
+    }
+
+    private var installModeHelp: String {
+        switch vm.installMode {
+        case .install:
+            return "Copy the source into ~/Library/Application Support/Cider/Program Files/<DisplayName>/. The .app bundle stays small."
+        case .bundle:
+            return "Copy the source inside the .app bundle (sibling of Contents/). Bundle stays self-contained and portable."
+        case .link:
+            return "Run the app from where it sits — no copy. cider.json records an absolute path to the source folder."
+        }
+    }
+
+    private var sourceFieldHelp: String {
+        switch vm.installMode {
+        case .install, .bundle:
+            return "Folder, .zip, or http(s):// URL. URLs may point at a zip directly or at a cider.json that references one."
+        case .link:
+            return "Absolute path to the existing folder Cider should run in place."
+        }
+    }
+
+    private var sourceFieldPlaceholder: String {
+        switch vm.installMode {
+        case .install, .bundle:
+            return "/path/to/folder, /path/to/game.zip, or https://…/game.zip"
+        case .link:
+            return "/Users/me/Games/MyGame"
         }
     }
 
@@ -252,7 +300,7 @@ struct MoreDialogView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.large)
                     .keyboardShortcut(.cancelAction)
-                Button("Save") { onSave(vm.buildConfig()) }
+                Button("Save") { onSave() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .disabled(!vm.isValid)
@@ -367,6 +415,7 @@ struct MoreDialogView: View {
     enum FilterKind {
         case image
         case anyContent
+        case folderOnly
     }
 
     private func pathPicker(text: Binding<String>, placeholder: String, filter: FilterKind) -> some View {
@@ -486,6 +535,9 @@ struct MoreDialogView: View {
         case .anyContent:
             panel.canChooseDirectories = true
             panel.canChooseFiles = true
+        case .folderOnly:
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
         }
         if let parent = NSApp.keyWindow {
             panel.beginSheetModal(for: parent) { response in

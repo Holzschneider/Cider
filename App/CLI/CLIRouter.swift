@@ -64,7 +64,11 @@ enum GUIEntry {
             )
             controller?.onDoubleClick = { [weak controller] in
                 MoreDialogController.present(prefill: cfg, dropped: .none) { outcome in
-                    guard case .saved(let updated) = outcome else { return }
+                    guard case .saved(let plan) = outcome else { return }
+                    // Splash-double-click reconfig only rewrites cider.json
+                    // — the data is already materialised in place. Mode /
+                    // source from the InstallPlan are ignored here.
+                    let updated = plan.config
                     do {
                         switch resolved.source {
                         case .inBundleOverride(let url):

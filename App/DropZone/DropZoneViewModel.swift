@@ -42,6 +42,9 @@ final class DropZoneViewModel: ObservableObject {
 
     @Published var dropped: DroppedSource = .none
     @Published var loadedConfig: CiderConfig? = nil
+    // The full install plan from MoreDialog (config + mode + source).
+    // Phase 8 hands this to Installer.run() on Apply / Create.
+    var installPlan: InstallPlan? = nil
     @Published var statusMessage: String = ""
     @Published var isOptionPressed: Bool = false
 

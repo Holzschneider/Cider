@@ -2,6 +2,17 @@ import Foundation
 import AppKit
 import SwiftUI
 import CiderModels
+import CiderCore
+
+// What the Save button hands back to the caller. `source` is nil when the
+// user is editing an already-installed config and didn't drop a fresh
+// source — Phase 8's Apply path treats that as "skip Installer, just
+// rewrite cider.json + re-icon".
+struct InstallPlan {
+    let config: CiderConfig
+    let mode: InstallMode
+    let source: SourceAcquisition?
+}
 
 // Hosts MoreDialogView in its own NSWindow and presents it as a SHEET on
 // the calling window (drop zone / splash). Sheet-based presentation is
@@ -19,7 +30,7 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
     private static var active: MoreDialogController?
 
     enum Outcome {
-        case saved(CiderConfig)
+        case saved(InstallPlan)
         case cancelled
     }
 
@@ -47,8 +58,13 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
             // closures became no-ops when the controller hit the autorelease
             // pool early.
             onCancel: { self.finish(.cancelled) },
-            onSave: { cfg in
-                self.finish(.saved(cfg))
+            onSave: {
+                let plan = InstallPlan(
+                    config: self.vm.buildConfig(),
+                    mode: self.vm.installMode,
+                    source: self.vm.sourceAcquisition
+                )
+                self.finish(.saved(plan))
             }
         )
         let host = NSHostingController(rootView: view)

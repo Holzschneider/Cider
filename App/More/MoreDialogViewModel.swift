@@ -1,14 +1,26 @@
 import Foundation
 import Combine
 import CiderModels
+import CiderCore
 
-// Schema-v2 form state for MoreDialog. The "source" half of the v1 schema
-// (mode/path/url/inBundleFolder/sha256) is gone — the user picks an
-// install mode at config time and the result is captured as a single
-// `applicationPath` (relative or absolute) in cider.json.
+// Schema-v2 form state for MoreDialog.
 //
-// For Phase 1 the install-mode picker isn't built yet (Phase 6); the form
-// shows a single editable Application path that the user can adjust.
+// The form exposes two paths that look similar but serve different roles:
+//
+//   * `sourcePath` — where the installer should pull data from. Folder,
+//     zip, or http(s):// URL. Only meaningful at Apply time. Phase 8 hands
+//     it to Installer.run() as a SourceAcquisition.
+//
+//   * `applicationPath` — what ends up inside the persisted cider.json.
+//     For Link mode this IS the source (we point at it in place). For
+//     Install/Bundle the Installer computes the final value (target dir
+//     under AppSupport or bundle's Application/); the form leaves it
+//     alone so edit-save round-trips don't destroy it.
+//
+// Install mode picker wiring: Install → copy into AppSupport,
+// Bundle → copy into <bundle>/Application/, Link → run the folder in
+// place. The picker defaults from the dropped source kind (folder→Link,
+// zip/URL→Install) but the user is free to pick any mode.
 @MainActor
 final class MoreDialogViewModel: ObservableObject {
     // Basic
@@ -16,9 +28,13 @@ final class MoreDialogViewModel: ObservableObject {
     @Published var exe: String = ""
     @Published var argsText: String = ""
 
-    // Application directory (resolved on launch). Relative or absolute.
-    // Phase 6 will hide this behind the install-mode picker; for now it's
-    // editable so we can keep the schema testable end-to-end.
+    // Install plan
+    @Published var installMode: InstallMode = .install
+    @Published var sourcePath: String = ""
+
+    // Persisted config path. Hidden from the form UI in Phase 6 — only
+    // touched when loading an existing config or when Link mode needs
+    // its value mirrored from sourcePath.
     @Published var applicationPath: String = ""
     @Published var originURL: String = ""
 
@@ -100,6 +116,14 @@ final class MoreDialogViewModel: ObservableObject {
     func load(from config: CiderConfig) {
         displayName = config.displayName
         applicationPath = config.applicationPath
+        // Heuristic: deduce install mode from the persisted applicationPath.
+        // This is best-effort — the user can override via the picker.
+        installMode = Self.inferMode(from: config.applicationPath)
+        // For Link mode, the source IS the applicationPath (the folder
+        // we're pointing at). For Install/Bundle the source isn't recorded
+        // in cider.json (the data is already in place); leave sourcePath
+        // empty until the user drops a new source.
+        sourcePath = installMode == .link ? config.applicationPath : ""
         exe = config.exe
         argsText = config.args.joined(separator: " ")
 
@@ -126,24 +150,29 @@ final class MoreDialogViewModel: ObservableObject {
         originURL = config.originURL ?? ""
     }
 
-    // Seed sensible defaults from a folder/zip drop. Until Phase 2-4 wire
-    // the Installer up, applicationPath is just the dropped item's name —
-    // good enough for Link mode and a sensible starting point for the
-    // proper install-mode picker in Phase 6.
+    // Seed sensible defaults from a drop. Sets sourcePath for the
+    // Installer, picks a default install mode that fits the source kind,
+    // and guesses a display name from the source's last path component.
     func seed(fromDrop dropped: DropZoneViewModel.DroppedSource) {
         switch dropped {
         case .folder(let url):
-            applicationPath = url.path  // absolute → Link-mode default
+            sourcePath = url.path
+            // Folder drops default to Link — the natural "run from where
+            // it sits" mode. User can switch to Install/Bundle if they
+            // want a copy.
+            installMode = .link
             if displayName.isEmpty { displayName = url.lastPathComponent }
         case .zip(let url):
-            applicationPath = url.path  // absolute, but no on-disk dir; Phase 3 will install
+            sourcePath = url.path
+            // Zip can't be Linked — pre-pick Install.
+            installMode = .install
             if displayName.isEmpty {
                 displayName = url.deletingPathExtension().lastPathComponent
             }
         case .url(let url):
-            // Remote URL: applicationPath stays whatever the user / fetched
-            // cider.json already filled in. Just guess a display name from
-            // the URL's last path component if nothing is set yet.
+            sourcePath = url.absoluteString
+            // URL can't be Linked — pre-pick Install.
+            installMode = .install
             if displayName.isEmpty {
                 let stem = url.deletingPathExtension().lastPathComponent
                 displayName = stem.isEmpty ? (url.host ?? "") : stem
@@ -154,10 +183,18 @@ final class MoreDialogViewModel: ObservableObject {
     }
 
     // Returns the URL the user can browse for an executable, or nil if
-    // browsing isn't applicable (path empty / not on disk).
+    // browsing isn't applicable (path empty / not on disk / URL). The
+    // picker uses sourcePath first (pre-install), then falls back to
+    // applicationPath (post-install edit).
     var sourceForBrowsing: URL? {
-        let trimmed = applicationPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty ? applicationPath : sourcePath
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
+        // Remote URLs can't be browsed for an exe — user types it.
+        if trimmed.lowercased().hasPrefix("http://") || trimmed.lowercased().hasPrefix("https://") {
+            return nil
+        }
         let url = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
@@ -165,10 +202,43 @@ final class MoreDialogViewModel: ObservableObject {
         return url.pathExtension.lowercased() == "zip" ? url : nil
     }
 
+    // Interprets `sourcePath` as a SourceAcquisition the Installer can
+    // consume. Nil when the input isn't understandable (empty, bogus URL,
+    // or a file path that doesn't exist and isn't a .zip).
+    var sourceAcquisition: SourceAcquisition? {
+        let trimmed = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let url = URL(string: trimmed),
+           let scheme = url.scheme?.lowercased(),
+           scheme == "http" || scheme == "https" {
+            return .url(url)
+        }
+        let path = (trimmed as NSString).expandingTildeInPath
+        let fileURL = URL(fileURLWithPath: path)
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDir)
+        if exists, isDir.boolValue { return .folder(fileURL) }
+        if exists, fileURL.pathExtension.lowercased() == "zip" { return .zip(fileURL) }
+        return nil
+    }
+
     func buildConfig() -> CiderConfig {
-        CiderConfig(
+        // For Link mode, cider.json's applicationPath is the source folder
+        // itself (absolute). For Install/Bundle it stays at whatever was
+        // already loaded — the Installer overwrites it at apply time.
+        let effectiveAppPath: String = {
+            if installMode == .link {
+                let trimmed = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty
+                    ? applicationPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                    : (trimmed as NSString).expandingTildeInPath
+            }
+            return applicationPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        }()
+
+        return CiderConfig(
             displayName: displayName.trimmingCharacters(in: .whitespaces),
-            applicationPath: applicationPath.trimmingCharacters(in: .whitespaces),
+            applicationPath: effectiveAppPath,
             exe: exe.trimmingCharacters(in: .whitespaces),
             args: tokenise(argsText),
             engine: CiderConfig.EngineRef(
@@ -200,11 +270,35 @@ final class MoreDialogViewModel: ObservableObject {
     }
 
     var isValid: Bool {
-        !displayName.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !exe.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !engineName.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !engineURL.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !applicationPath.trimmingCharacters(in: .whitespaces).isEmpty
+        guard !displayName.trimmingCharacters(in: .whitespaces).isEmpty,
+              !exe.trimmingCharacters(in: .whitespaces).isEmpty,
+              !engineName.trimmingCharacters(in: .whitespaces).isEmpty,
+              !engineURL.trimmingCharacters(in: .whitespaces).isEmpty
+        else { return false }
+        switch installMode {
+        case .link:
+            // Link requires a local folder — reject URLs and zips.
+            guard case .folder = sourceAcquisition else { return false }
+            return true
+        case .install, .bundle:
+            // Need either a fresh source (to install) or a previously
+            // materialised applicationPath (editing existing config).
+            let hasSource = sourceAcquisition != nil
+            let hasExistingTarget = !applicationPath.trimmingCharacters(in: .whitespaces).isEmpty
+            return hasSource || hasExistingTarget
+        }
+    }
+
+    // MARK: - Helpers
+
+    // Absolute-looking path → Link; "Application" or "Application/..." →
+    // Bundle; anything else relative → Install. Empty → Install (default).
+    static func inferMode(from applicationPath: String) -> InstallMode {
+        let p = applicationPath.trimmingCharacters(in: .whitespaces)
+        if p.isEmpty { return .install }
+        if p.hasPrefix("/") || p.hasPrefix("~") { return .link }
+        if p == "Application" || p.hasPrefix("Application/") { return .bundle }
+        return .install
     }
 
     private func emptyToNil(_ s: String) -> String? {
