@@ -31,7 +31,7 @@ struct DropZoneView: View {
             }
 
             HStack {
-                Button("More…") {
+                Button("Configure") {
                     vm.openMoreDialog?(vm.loadedConfig, vm.dropped)
                 }
                 .keyboardShortcut(",", modifiers: .command)

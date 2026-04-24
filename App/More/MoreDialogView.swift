@@ -70,16 +70,6 @@ struct MoreDialogView: View {
         )
     }
 
-    @ViewBuilder
-    private func errorMarker(_ message: String?) -> some View {
-        if let message {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
-                .font(.system(size: 12, weight: .regular))
-                .help(message)
-                .accessibilityLabel(message)
-        }
-    }
 
     // MARK: - Sections
 
@@ -413,17 +403,14 @@ struct MoreDialogView: View {
         @ViewBuilder field: () -> Field
     ) -> some View {
         HStack(alignment: .center, spacing: 16) {
-            HStack(spacing: 6) {
-                DialogRowLabel(text: label)
-                errorMarker(error)
-            }
+            DialogRowLabel(text: label, error: error)
             VStack(alignment: .leading, spacing: 6) {
                 field()
-                if let error {
-                    Text(error)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.red)
-                } else if let help {
+                // The error message lives in the marker's transient
+                // bubble (see ErrorMarker) — only the help text shows
+                // under the field, when there's no error competing for
+                // attention.
+                if error == nil, let help {
                     DialogHelpText(text: help)
                 }
             }

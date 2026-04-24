@@ -103,13 +103,12 @@ final class DropZoneViewModel: ObservableObject {
                                  label: "from \(url.lastPathComponent)/cider.json") {
                     return
                 }
-                // Parse failed — fall through to "configure from scratch".
-                statusMessage = "Folder's cider.json isn't a valid Cider v2 config — opening More… to configure from scratch."
+                // Parse failed — drop into "configure from scratch".
+                statusMessage = "Folder's cider.json isn't a valid Cider v2 config — click Configure to set it up."
             } else {
-                statusMessage = "Folder has no cider.json — click More… to configure."
+                statusMessage = "Folder has no cider.json — click Configure to set it up."
             }
             loadedConfig = nil
-            openMoreDialog?(nil, dropped)
             return
         }
 
@@ -117,8 +116,7 @@ final class DropZoneViewModel: ObservableObject {
         case "json":
             dropped = .bareConfig(url)
             if !tryLoadConfig(from: url, label: "loaded from \(url.lastPathComponent)") {
-                statusMessage = "\(url.lastPathComponent) isn't a valid Cider v2 config — opening More… to configure from scratch."
-                openMoreDialog?(nil, dropped)
+                statusMessage = "\(url.lastPathComponent) isn't a valid Cider v2 config — click Configure to set it up."
             }
         case "zip":
             dropped = .zip(url)
@@ -127,8 +125,7 @@ final class DropZoneViewModel: ObservableObject {
                 statusMessage = "Loaded cider.json from inside \(url.lastPathComponent)."
             } else {
                 loadedConfig = nil
-                statusMessage = "Zip has no cider.json at root — click More… to configure."
-                openMoreDialog?(nil, dropped)
+                statusMessage = "Zip has no cider.json at root — click Configure to set it up."
             }
         default:
             statusMessage = "Unsupported drop: \(url.lastPathComponent). Drop a folder, .zip, cider.json, or a URL."
@@ -146,13 +143,11 @@ final class DropZoneViewModel: ObservableObject {
                 let resolved = try await URLSourceResolver.resolve(url: url)
                 switch resolved {
                 case .zip:
-                    statusMessage = "URL points at a zip — click More… to configure, then Apply to download and install."
-                    openMoreDialog?(nil, dropped)
+                    statusMessage = "URL points at a zip — click Configure, then Apply to download and install."
                 case .ciderJSON(let cfg, let dataURL, _):
                     loadedConfig = cfg
                     if dataURL == nil {
-                        statusMessage = "Loaded cider.json from \(url.absoluteString) — but it has no distributionURL. Add one in More… before applying."
-                        openMoreDialog?(cfg, dropped)
+                        statusMessage = "Loaded cider.json from \(url.absoluteString) — but it has no distributionURL. Click Configure and add one before applying."
                     } else {
                         statusMessage = "Loaded cider.json from \(url.absoluteString)."
                     }
