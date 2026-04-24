@@ -25,6 +25,61 @@ final class MoreDialogViewModel: ObservableObject {
     @Published var engineURL: String = ""
     @Published var engineSha256: String = ""
 
+    // Engine catalogue (per-row state for the "Wine engine" section).
+    // The user toggles `useCustomRepository`; when off, the standard
+    // Sikarugir Engines page URL is shown read-only and is what we list
+    // against. When on, `customRepositoryURL` is editable.
+    @Published var useCustomRepository: Bool = false
+    @Published var customRepositoryURL: String = ""
+    @Published var availableEngines: [EngineCatalog.Entry] = []
+    @Published var isFetchingEngines: Bool = false
+    @Published var catalogError: String? = nil
+    private var lastFetchedRepositoryURL: String? = nil
+
+    var effectiveRepositoryURL: String {
+        useCustomRepository
+            ? customRepositoryURL
+            : EngineCatalog.defaultRepositoryPageURL
+    }
+
+    // Re-runs the catalog fetch for the current effectiveRepositoryURL.
+    // No-ops if a fetch for the same URL is already in flight.
+    func refreshEngineCatalog(initial: Bool = false) {
+        let url = effectiveRepositoryURL
+        guard !url.isEmpty else {
+            availableEngines = []
+            catalogError = nil
+            return
+        }
+        if isFetchingEngines, lastFetchedRepositoryURL == url { return }
+        lastFetchedRepositoryURL = url
+        isFetchingEngines = true
+        catalogError = nil
+        Task { @MainActor [weak self] in
+            do {
+                let entries = try await EngineCatalog.fetch(repositoryPageURL: url)
+                guard let self else { return }
+                self.availableEngines = entries
+                // Pick a sensible default the FIRST time we populate the
+                // list (or any time the engineName is empty / no longer
+                // present in the new catalog).
+                if initial || self.engineName.isEmpty
+                   || !entries.contains(where: { $0.name == self.engineName }) {
+                    if let pick = EngineCatalog.suggestedDefault(from: entries) {
+                        self.engineName = pick.name
+                        self.engineURL = pick.downloadURL
+                    }
+                }
+                self.isFetchingEngines = false
+            } catch {
+                guard let self else { return }
+                self.availableEngines = []
+                self.catalogError = String(describing: error)
+                self.isFetchingEngines = false
+            }
+        }
+    }
+
     // Wrapper template (rarely edited — Cider's baked-in default is fine)
     @Published var templateVersion: String = CiderConfig.TemplateRef.default.version
     @Published var templateURL: String = CiderConfig.TemplateRef.default.url

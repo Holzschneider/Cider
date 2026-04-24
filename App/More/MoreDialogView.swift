@@ -94,19 +94,73 @@ struct MoreDialogView: View {
 
     private var engineSection: some View {
         section("Wine engine") {
-            row("Name") {
-                TextField("WS12WineCX24.0.7_7", text: $vm.engineName)
-                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
+            row("Custom Repository") {
+                HStack(spacing: 8) {
+                    Toggle("", isOn: $vm.useCustomRepository)
+                        .toggleStyle(.checkbox)
+                        .labelsHidden()
+                        .onChange(of: vm.useCustomRepository) { _ in
+                            vm.refreshEngineCatalog()
+                        }
+                    if vm.useCustomRepository {
+                        TextField(EngineCatalog.defaultRepositoryPageURL,
+                                  text: $vm.customRepositoryURL)
+                            .textFieldStyle(DialogTextFieldStyle(monospaced: true))
+                            .onSubmit { vm.refreshEngineCatalog() }
+                    } else {
+                        // Read-only display of the default catalog URL.
+                        Text(EngineCatalog.defaultRepositoryPageURL)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(DialogTheme.textMuted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .frame(height: 24)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(DialogTheme.fieldBg.opacity(0.55))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .strokeBorder(DialogTheme.fieldBorder, lineWidth: 0.5)
+                            )
+                    }
+                }
             }
-            row("Download URL") {
-                TextField("https://github.com/Sikarugir-App/Engines/…", text: $vm.engineURL)
-                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
+            row("Name") {
+                HStack(spacing: 8) {
+                    EditableComboBox(
+                        text: $vm.engineName,
+                        items: vm.availableEngines.map(\.name),
+                        placeholder: "WS12WineCX24.0.7_7"
+                    )
+                    .frame(height: 24)
+                    .onChange(of: vm.engineName) { newName in
+                        // When the user picks a catalog entry, update the
+                        // download URL alongside it.
+                        if let entry = vm.availableEngines.first(where: { $0.name == newName }) {
+                            vm.engineURL = entry.downloadURL
+                        }
+                    }
+                    if vm.isFetchingEngines {
+                        ProgressView()
+                            .scaleEffect(0.55)
+                            .frame(width: 16, height: 16)
+                    }
+                }
+            }
+            if let err = vm.catalogError {
+                row(" ") {
+                    Text(err)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.orange)
+                }
             }
             row("Expected SHA-256", help: "Optional — verifies the download.") {
                 TextField("e3b0c442… (64 hex chars)", text: $vm.engineSha256)
                     .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
         }
+        .onAppear { vm.refreshEngineCatalog(initial: true) }
     }
 
     private var graphicsSection: some View {
