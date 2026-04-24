@@ -160,6 +160,20 @@ final class MoreDialogViewModel: ObservableObject {
         }
     }
 
+    // Returns the URL the user can browse for an executable, or nil if
+    // browsing isn't applicable (mode != .path, empty path, missing on
+    // disk). Folders → NSOpenPanel. Zips → unzip-l listing dialog.
+    var sourceForBrowsing: URL? {
+        guard sourceMode == .path else { return nil }
+        let trimmed = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
+        if isDir.boolValue { return url }
+        return url.pathExtension.lowercased() == "zip" ? url : nil
+    }
+
     func buildConfig() -> CiderConfig {
         CiderConfig(
             displayName: displayName.trimmingCharacters(in: .whitespaces),

@@ -45,8 +45,14 @@ struct MoreDialogView: View {
                     .textFieldStyle(DialogTextFieldStyle())
             }
             row("Executable") {
-                TextField("RagnarokPlus/ragnarok-plus-patcher.exe", text: $vm.exe)
-                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
+                HStack(spacing: 8) {
+                    TextField("RagnarokPlus/ragnarok-plus-patcher.exe", text: $vm.exe)
+                        .textFieldStyle(DialogTextFieldStyle(monospaced: true))
+                    if let source = vm.sourceForBrowsing {
+                        Button("Browse…") { browseForExecutable(in: source) }
+                            .buttonStyle(.bordered)
+                    }
+                }
             }
             row("Command-line args") {
                 TextField("/tui /log", text: $vm.argsText)
@@ -404,6 +410,99 @@ struct MoreDialogView: View {
             }
             .buttonStyle(.bordered)
         }
+    }
+
+    // MARK: - Executable picker
+
+    private func browseForExecutable(in source: URL) {
+        if source.pathExtension.lowercased() == "zip" {
+            chooseExeFromZip(source)
+        } else {
+            chooseExeFromFolder(source)
+        }
+    }
+
+    private func chooseExeFromFolder(_ folder: URL) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = folder
+        panel.message = "Choose the Windows executable inside \(folder.lastPathComponent)."
+        panel.prompt = "Choose"
+        let pick: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let picked = panel.url else { return }
+            vm.exe = relativePath(of: picked, under: folder) ?? picked.path
+        }
+        if let parent = NSApp.keyWindow {
+            panel.beginSheetModal(for: parent, completionHandler: pick)
+        } else {
+            pick(panel.runModal())
+        }
+    }
+
+    // Lists .exe entries inside the zip via `unzip -l`, presents an
+    // NSAlert with a popup so the user can pick one without extracting.
+    private func chooseExeFromZip(_ zip: URL) {
+        let exes = listExecutablesInZip(zip)
+        guard !exes.isEmpty else {
+            let warn = NSAlert()
+            warn.messageText = "No .exe files found in \(zip.lastPathComponent)"
+            warn.informativeText = "Type the path manually if your executable has an unusual extension."
+            warn.runModal()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Choose executable"
+        alert.informativeText = "From \(zip.lastPathComponent)"
+        alert.addButton(withTitle: "Choose")
+        alert.addButton(withTitle: "Cancel")
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        popup.addItems(withTitles: exes)
+        alert.accessoryView = popup
+        if alert.runModal() == .alertFirstButtonReturn {
+            vm.exe = popup.titleOfSelectedItem ?? vm.exe
+        }
+    }
+
+    private func listExecutablesInZip(_ zip: URL) -> [String] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        process.arguments = ["-l", zip.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return []
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let text = String(decoding: data, as: UTF8.self)
+        var results: [String] = []
+        for line in text.split(separator: "\n") {
+            // Lines look like:
+            //   "    12345  2024-01-01 12:00   path/to/file.exe"
+            // The filename is everything after the time column. Splitting
+            // by whitespace and reassembling from index 3 keeps spaces in
+            // filenames intact.
+            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard parts.count >= 4 else { continue }
+            let path = parts.dropFirst(3).joined(separator: " ")
+            if path.lowercased().hasSuffix(".exe") {
+                results.append(path)
+            }
+        }
+        return results.sorted()
+    }
+
+    // Returns "Foo/Bar.exe" for picked = base/Foo/Bar.exe.
+    private func relativePath(of picked: URL, under base: URL) -> String? {
+        let basePath = base.standardizedFileURL.path
+        let pickedPath = picked.standardizedFileURL.path
+        guard pickedPath.hasPrefix(basePath + "/") else { return nil }
+        return String(pickedPath.dropFirst(basePath.count + 1))
     }
 
     // Sheet attached to the key (More) window so the panel runs inside the
