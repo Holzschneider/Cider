@@ -64,7 +64,8 @@ public struct Installer {
         case .install:
             return try installInstall(source: source, baseConfig: baseConfig, progress: progress)
         case .bundle:
-            throw Error.notYetImplemented(mode)
+            return try installBundle(source: source, baseConfig: baseConfig,
+                                     bundleURL: bundleURL, progress: progress)
         }
     }
 
@@ -112,7 +113,7 @@ public struct Installer {
         )
     }
 
-    // MARK: - Install (folder copy + local zip extract)
+    // MARK: - Install (folder copy + local zip extract → AppSupport)
 
     private func installInstall(
         source: SourceAcquisition,
@@ -123,29 +124,7 @@ public struct Installer {
         guard !displayName.isEmpty else { throw Error.invalidDisplayName }
 
         let target = AppSupport.programFiles(forBundleNamed: displayName)
-        try resetDirectory(target)
-
-        switch source {
-        case .folder(let src):
-            try ensureExists(src, kind: .folder)
-            progress?(.stage("Copying source", detail: src.lastPathComponent))
-            // cp -R preserves the source's name as the top-level entry
-            // under target/, matching the user-spec rule:
-            //   /tmp/MyGame copied into target/  →  target/MyGame/
-            // (so cider.json's exe = "MyGame/start.exe" still resolves).
-            try Shell.run("/bin/cp", ["-R", src.path, target.path], captureOutput: true)
-        case .zip(let zip):
-            try ensureExists(zip, kind: .zip)
-            progress?(.stage("Extracting archive", detail: zip.lastPathComponent))
-            // Whatever the zip contains (flat or with a single top-level
-            // dir) ends up directly under target/. Per the user-spec rule:
-            //   - flat zip      →  target/foo.exe
-            //   - dir-rooted    →  target/MyGame/foo.exe
-            try Shell.run("/usr/bin/unzip", ["-q", zip.path, "-d", target.path], captureOutput: true)
-        case .url:
-            // Phase 5 hooks the download path in here.
-            throw Error.urlSourceRequiresPhase5
-        }
+        try materialise(source: source, into: target, progress: progress)
 
         // cider.json sits in Configs/<name>.json with applicationPath = the
         // absolute path to the materialised data. The exe path stays
@@ -162,6 +141,73 @@ public struct Installer {
             applicationPath: config.applicationPath,
             mode: .install
         )
+    }
+
+    // MARK: - Bundle (folder copy + local zip extract → <bundle>/Application/)
+
+    // Same materialisation rules as Install, but the data lands inside
+    // the .app bundle (sibling of Contents/) and the cider.json sits at
+    // <bundle>/cider.json with a relative applicationPath = "Application".
+    // Result: bundle stays self-contained, can be moved between disks /
+    // Macs without breaking the path.
+    //
+    // Touches only siblings of Contents/, so the existing codesign /
+    // notarization on Contents/ stays valid (per the same rule
+    // BundleTransmogrifier already relies on for the Finder custom icon
+    // and the in-bundle cider.json).
+    private func installBundle(
+        source: SourceAcquisition,
+        baseConfig: CiderConfig,
+        bundleURL: URL,
+        progress: InstallProgressCallback?
+    ) throws -> InstallResult {
+        let displayName = sanitised(baseConfig.displayName)
+        guard !displayName.isEmpty else { throw Error.invalidDisplayName }
+
+        let applicationDir = bundleURL.appendingPathComponent("Application", isDirectory: true)
+        try materialise(source: source, into: applicationDir, progress: progress)
+
+        let configURL = bundleURL.appendingPathComponent("cider.json")
+        var config = baseConfig
+        config.applicationPath = "Application"
+        try config.write(to: configURL)
+
+        progress?(.stage("Done", detail: ""))
+        return InstallResult(
+            configFileURL: configURL,
+            applicationPath: config.applicationPath,
+            mode: .bundle
+        )
+    }
+
+    // MARK: - Materialisation (shared by Install + Bundle)
+
+    private func materialise(
+        source: SourceAcquisition,
+        into target: URL,
+        progress: InstallProgressCallback?
+    ) throws {
+        try resetDirectory(target)
+
+        switch source {
+        case .folder(let src):
+            try ensureExists(src, kind: .folder)
+            progress?(.stage("Copying source", detail: src.lastPathComponent))
+            // cp -R preserves the source's name as the top-level entry
+            // under target/, so the user-spec rule holds:
+            //   /tmp/MyGame copied into target/  →  target/MyGame/
+            try Shell.run("/bin/cp", ["-R", src.path, target.path], captureOutput: true)
+        case .zip(let zip):
+            try ensureExists(zip, kind: .zip)
+            progress?(.stage("Extracting archive", detail: zip.lastPathComponent))
+            // Whatever the zip contains (flat or with a single top-level
+            // dir) ends up directly under target/.
+            try Shell.run("/usr/bin/unzip", ["-q", zip.path, "-d", target.path], captureOutput: true)
+        case .url:
+            // Phase 5 hooks the download path in here (downloads to
+            // AppSupport/Cache, then routes through the .zip path above).
+            throw Error.urlSourceRequiresPhase5
+        }
     }
 
     // MARK: - Common helpers

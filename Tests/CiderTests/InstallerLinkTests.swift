@@ -93,21 +93,4 @@ final class InstallerLinkTests: XCTestCase {
         }
     }
 
-    // Install mode landed in Phase 3; Bundle is still notYetImplemented
-    // until Phase 4.
-    func testBundleIsNotYetImplemented() async {
-        do {
-            _ = try await Installer().run(
-                source: .folder(URL(fileURLWithPath: "/tmp")),
-                mode: .bundle,
-                baseConfig: sampleConfig("X"),
-                bundleURL: URL(fileURLWithPath: "/tmp/Test.app")
-            )
-            XCTFail("expected notYetImplemented for bundle")
-        } catch Installer.Error.notYetImplemented(let m) {
-            XCTAssertEqual(m, .bundle)
-        } catch {
-            XCTFail("expected notYetImplemented for bundle, got \(error)")
-        }
-    }
 }
