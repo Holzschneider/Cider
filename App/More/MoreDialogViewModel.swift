@@ -269,24 +269,67 @@ final class MoreDialogViewModel: ObservableObject {
         )
     }
 
-    var isValid: Bool {
-        guard !displayName.trimmingCharacters(in: .whitespaces).isEmpty,
-              !exe.trimmingCharacters(in: .whitespaces).isEmpty,
-              !engineName.trimmingCharacters(in: .whitespaces).isEmpty,
-              !engineURL.trimmingCharacters(in: .whitespaces).isEmpty
-        else { return false }
+    // MARK: - Per-field validation (Phase 9)
+
+    // Stored "general" error surfaced in the dialog when an Apply / Create
+    // attempt failed. Set by DropZoneController right before re-opening
+    // the dialog; cleared on the next successful Save.
+    @Published var generalError: String? = nil
+
+    var displayNameError: String? {
+        displayName.trimmingCharacters(in: .whitespaces).isEmpty
+            ? "Display name is required."
+            : nil
+    }
+
+    var exeError: String? {
+        exe.trimmingCharacters(in: .whitespaces).isEmpty
+            ? "Executable path is required."
+            : nil
+    }
+
+    var engineNameError: String? {
+        engineName.trimmingCharacters(in: .whitespaces).isEmpty
+            ? "Engine name is required."
+            : nil
+    }
+
+    var engineURLError: String? {
+        let trimmed = engineURL.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return "Engine download URL is required." }
+        if URL(string: trimmed)?.scheme == nil {
+            return "Engine URL must include a scheme (https://…)."
+        }
+        return nil
+    }
+
+    var sourceError: String? {
+        let trimmed = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
         switch installMode {
         case .link:
-            // Link requires a local folder — reject URLs and zips.
-            guard case .folder = sourceAcquisition else { return false }
-            return true
+            if trimmed.isEmpty { return "Pick the folder Cider should run in place." }
+            if case .folder = sourceAcquisition { return nil }
+            return "Link mode needs an existing local folder (not a zip or URL)."
         case .install, .bundle:
-            // Need either a fresh source (to install) or a previously
-            // materialised applicationPath (editing existing config).
-            let hasSource = sourceAcquisition != nil
+            // Either a fresh source must be set, or the user is editing
+            // an existing config (applicationPath populated from load()).
             let hasExistingTarget = !applicationPath.trimmingCharacters(in: .whitespaces).isEmpty
-            return hasSource || hasExistingTarget
+            if trimmed.isEmpty {
+                return hasExistingTarget ? nil : "Drop a folder, .zip, or paste a URL."
+            }
+            if sourceAcquisition == nil {
+                return "Source must be an existing folder, .zip, or http(s):// URL."
+            }
+            return nil
         }
+    }
+
+    var isValid: Bool {
+        displayNameError == nil
+            && exeError == nil
+            && engineNameError == nil
+            && engineURLError == nil
+            && sourceError == nil
     }
 
     // MARK: - Helpers

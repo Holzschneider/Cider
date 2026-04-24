@@ -37,6 +37,7 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
     static func present(
         prefill: CiderConfig?,
         dropped: DropZoneViewModel.DroppedSource,
+        initialError: String? = nil,
         completion: @escaping (Outcome) -> Void
     ) {
         // Re-entrancy guard: ignore if a dialog is already up.
@@ -44,6 +45,7 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
         let controller = MoreDialogController()
         if let prefill { controller.vm.load(from: prefill) }
         controller.vm.seed(fromDrop: dropped)
+        controller.vm.generalError = initialError
         controller.completion = completion
         active = controller
         controller.show()

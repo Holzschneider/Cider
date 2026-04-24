@@ -161,7 +161,30 @@ final class DropZoneController {
         case .cancelled:
             vm.statusMessage = "Cancelled."
         case .failure(let error):
-            showAlert("Could not apply configuration", error)
+            // Phase 9: auto-reopen MoreDialog with the failure surfaced
+            // as a banner. Lets the user fix the offending field and try
+            // again without retyping everything.
+            reopenMoreDialogWithError(plan: plan, error: error)
+        }
+    }
+
+    private func reopenMoreDialogWithError(plan: InstallPlan, error: Swift.Error) {
+        let message = String(describing: error)
+        vm.statusMessage = "Apply failed — see More… for details."
+        MoreDialogController.present(
+            prefill: plan.config,
+            dropped: vm.dropped,
+            initialError: message
+        ) { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .saved(let updated):
+                self.vm.loadedConfig = updated.config
+                self.vm.installPlan = updated
+                self.vm.statusMessage = "Configured \"\(updated.config.displayName)\" (mode: \(updated.mode.rawValue)) — click Create… or hold ⌥ for Apply."
+            case .cancelled:
+                break
+            }
         }
     }
 

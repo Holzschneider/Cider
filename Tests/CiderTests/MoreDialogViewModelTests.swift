@@ -216,6 +216,63 @@ final class MoreDialogViewModelTests: XCTestCase {
                        "Link mode mirrors sourcePath into applicationPath")
     }
 
+    // MARK: - Per-field validation (Phase 9)
+
+    func testPerFieldErrorsReturnHumanReadableMessages() {
+        let vm = MoreDialogViewModel()
+        XCTAssertNotNil(vm.displayNameError)
+        XCTAssertNotNil(vm.exeError)
+        XCTAssertNotNil(vm.engineNameError)
+        XCTAssertNotNil(vm.engineURLError)
+        XCTAssertNotNil(vm.sourceError)
+
+        vm.displayName = "Foo"
+        vm.exe = "Foo.exe"
+        vm.engineName = "WS12WineCX24.0.7_7"
+        vm.engineURL = "https://example.com/e.tar.xz"
+        vm.applicationPath = "MyGame"  // existing-install satisfies Install mode
+
+        XCTAssertNil(vm.displayNameError)
+        XCTAssertNil(vm.exeError)
+        XCTAssertNil(vm.engineNameError)
+        XCTAssertNil(vm.engineURLError)
+        XCTAssertNil(vm.sourceError)
+    }
+
+    func testEngineURLRequiresAScheme() {
+        let vm = MoreDialogViewModel()
+        vm.engineURL = "example.com/e.tar.xz"
+        XCTAssertEqual(vm.engineURLError, "Engine URL must include a scheme (https://…).")
+
+        vm.engineURL = "https://example.com/e.tar.xz"
+        XCTAssertNil(vm.engineURLError)
+    }
+
+    func testSourceErrorIsModeAware() {
+        let vm = MoreDialogViewModel()
+
+        // Link mode rejects URLs.
+        vm.installMode = .link
+        vm.sourcePath = "https://example.org/game.zip"
+        XCTAssertNotNil(vm.sourceError)
+
+        // Install mode accepts URLs.
+        vm.installMode = .install
+        XCTAssertNil(vm.sourceError)
+
+        // Install mode rejects nonsensical paths (not a folder, not a zip,
+        // not a URL) when no existing applicationPath is around to satisfy it.
+        vm.sourcePath = "/tmp/cider-bogus-\(UUID().uuidString)"
+        XCTAssertNotNil(vm.sourceError)
+    }
+
+    func testGeneralErrorPropertyRoundTrips() {
+        let vm = MoreDialogViewModel()
+        XCTAssertNil(vm.generalError)
+        vm.generalError = "Apply failed: HTTP 404"
+        XCTAssertEqual(vm.generalError, "Apply failed: HTTP 404")
+    }
+
     // MARK: - Helpers
 
     private func sampleConfig(applicationPath: String) -> CiderConfig {

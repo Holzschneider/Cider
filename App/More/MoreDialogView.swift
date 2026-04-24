@@ -17,14 +17,15 @@ struct MoreDialogView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: DialogTheme.sectionGap) {
+                    if let err = vm.generalError {
+                        generalErrorBanner(err)
+                    }
                     basicSection
                     sourceSection
                     engineSection
                     graphicsSection
                     wineOptionsSection
                     presentationSection
-                    // Storage section removed in Phase 1 — Phase 6 reintroduces
-                    // it as the install-mode picker (Install / Bundle / Link).
                 }
                 .padding(.top, DialogTheme.bodyTop)
                 .padding(.bottom, DialogTheme.bodyBottom)
@@ -38,15 +39,57 @@ struct MoreDialogView: View {
         .background(DialogTheme.windowBg)
     }
 
+    // MARK: - Banner
+
+    private func generalErrorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .font(.system(size: 16, weight: .regular))
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Last attempt failed")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DialogTheme.text)
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundStyle(DialogTheme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.red.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.red.opacity(0.45), lineWidth: 0.75)
+        )
+    }
+
+    @ViewBuilder
+    private func errorMarker(_ message: String?) -> some View {
+        if let message {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.red)
+                .font(.system(size: 12, weight: .regular))
+                .help(message)
+                .accessibilityLabel(message)
+        }
+    }
+
     // MARK: - Sections
 
     private var basicSection: some View {
         section("Basic") {
-            row("Display name") {
+            row("Display name", error: vm.displayNameError) {
                 TextField("My Windows Game", text: $vm.displayName)
                     .textFieldStyle(DialogTextFieldStyle())
             }
-            row("Executable") {
+            row("Executable", error: vm.exeError) {
                 HStack(spacing: 8) {
                     TextField("RagnarokPlus/ragnarok-plus-patcher.exe", text: $vm.exe)
                         .textFieldStyle(DialogTextFieldStyle(monospaced: true))
@@ -74,7 +117,7 @@ struct MoreDialogView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-            row("Source", help: sourceFieldHelp) {
+            row("Source", help: sourceFieldHelp, error: vm.sourceError) {
                 pathPicker(text: $vm.sourcePath,
                            placeholder: sourceFieldPlaceholder,
                            filter: vm.installMode == .link ? .folderOnly : .anyContent)
@@ -159,7 +202,7 @@ struct MoreDialogView: View {
                     }
                 }
             }
-            row("Name") {
+            row("Name", error: vm.engineNameError) {
                 HStack(spacing: 8) {
                     EditableComboBox(
                         text: $vm.engineName,
@@ -318,9 +361,22 @@ struct MoreDialogView: View {
     }
 
     private var statusPill: some View {
-        let (label, dot): (String, Color) = vm.isValid
-            ? ("Ready to save", DialogTheme.statusGreen)
-            : ("Fill in display name and source to continue", DialogTheme.statusYellow)
+        // First user-facing field error wins the pill text. Keeps the
+        // footer summary in sync with the inline red ! markers above.
+        let (label, dot): (String, Color)
+        if vm.isValid {
+            label = "Ready to save"
+            dot = DialogTheme.statusGreen
+        } else {
+            let firstError = vm.displayNameError
+                ?? vm.exeError
+                ?? vm.sourceError
+                ?? vm.engineNameError
+                ?? vm.engineURLError
+                ?? "Fill in the highlighted fields to continue"
+            label = firstError
+            dot = DialogTheme.statusYellow
+        }
         return HStack(spacing: 6) {
             Circle()
                 .fill(dot)
@@ -333,6 +389,7 @@ struct MoreDialogView: View {
             Text(label)
                 .font(.system(size: 12))
                 .foregroundStyle(DialogTheme.textMuted)
+                .lineLimit(2)
         }
     }
 
@@ -352,13 +409,23 @@ struct MoreDialogView: View {
     private func row<Field: View>(
         _ label: String,
         help: String? = nil,
+        error: String? = nil,
         @ViewBuilder field: () -> Field
     ) -> some View {
         HStack(alignment: .center, spacing: 16) {
-            DialogRowLabel(text: label)
+            HStack(spacing: 6) {
+                DialogRowLabel(text: label)
+                errorMarker(error)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 field()
-                if let help { DialogHelpText(text: help) }
+                if let error {
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                } else if let help {
+                    DialogHelpText(text: help)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
