@@ -23,27 +23,25 @@ final class DropZoneController {
     func attach() {
         let view = DropZoneView(vm: vm)
         let host = NSHostingController(rootView: view)
-
-        // Ask the SwiftUI view what size it actually wants BEFORE we
-        // build the window, so the window opens at its final size in
-        // a single pass — no post-show reflow, no visible "jump".
-        let preferredSize = host.sizeThatFits(
-            in: NSSize(width: CGFloat.greatestFiniteMagnitude,
-                       height: CGFloat.greatestFiniteMagnitude)
-        )
-
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: preferredSize),
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.contentViewController = host
+        let window = NSWindow(contentViewController: host)
+        window.styleMask = [.titled, .closable, .miniaturizable]
         window.title = "Cider"
         window.isReleasedWhenClosed = false
-        window.setFrameOrigin(centeredOrigin(for: window))
         self.window = window
+
+        // Show the window invisible so SwiftUI can lay it out without
+        // the user seeing the default position. Once layout settles on
+        // the next runloop tick, centre it and fade in. This is the
+        // simplest reliable way to avoid the "appears off, snaps to
+        // centre" flicker — no measurement before show, no fighting
+        // sizeThatFits / NSHostingController layout-timing quirks.
+        window.alphaValue = 0
         window.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window else { return }
+            self.centerOnScreen(window)
+            window.alphaValue = 1
+        }
 
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak vm] event in
             vm?.isOptionPressed = event.modifierFlags.contains(.option)
@@ -53,16 +51,16 @@ final class DropZoneController {
 
     // Geometric centre against the visible area (excluding menu bar and
     // Dock). NSWindow.center() biases toward the upper third on purpose
-    // ("alert area" convention) which isn't what we want for a primary
-    // window.
-    private func centeredOrigin(for window: NSWindow) -> NSPoint {
+    // ("alert area" convention).
+    private func centerOnScreen(_ window: NSWindow) {
         let screen = window.screen ?? NSScreen.main
         let visible = screen?.visibleFrame ?? .zero
         let frame = window.frame
-        return NSPoint(
+        let origin = NSPoint(
             x: (visible.midX - frame.width / 2).rounded(),
             y: (visible.midY - frame.height / 2).rounded()
         )
+        window.setFrameOrigin(origin)
     }
 
     deinit {
