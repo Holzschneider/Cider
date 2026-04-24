@@ -214,11 +214,19 @@ struct MoreDialogView: View {
             HStack(spacing: 10) {
                 statusPill
                 Spacer()
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(DialogSecondaryButtonStyle())
+                // Native styles here — custom ButtonStyle wrappers were
+                // interfering with the Button's hit-area inside an
+                // NSApp.runModal context, leaving the buttons rendered
+                // but unresponsive. The native .bordered / .borderedProminent
+                // tints to the .accent we set on the dark window so it
+                // still reads as the design's dark dialog.
+                Button("Cancel") { onCancel() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                     .keyboardShortcut(.cancelAction)
                 Button("Save") { onSave(vm.buildConfig()) }
-                    .buttonStyle(DialogPrimaryButtonStyle(enabled: vm.isValid))
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(!vm.isValid)
                     .keyboardShortcut(.defaultAction)
             }
@@ -340,7 +348,7 @@ struct MoreDialogView: View {
             Button("Browse…") {
                 openPicker(into: text, filter: filter)
             }
-            .buttonStyle(DialogSecondaryButtonStyle())
+            .buttonStyle(.bordered)
         }
     }
 
