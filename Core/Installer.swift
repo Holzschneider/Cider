@@ -62,7 +62,7 @@ public struct Installer {
         case .link:
             return try installLink(source: source, baseConfig: baseConfig)
         case .install:
-            throw Error.notYetImplemented(mode)
+            return try installInstall(source: source, baseConfig: baseConfig, progress: progress)
         case .bundle:
             throw Error.notYetImplemented(mode)
         }
@@ -112,6 +112,89 @@ public struct Installer {
         )
     }
 
+    // MARK: - Install (folder copy + local zip extract)
+
+    private func installInstall(
+        source: SourceAcquisition,
+        baseConfig: CiderConfig,
+        progress: InstallProgressCallback?
+    ) throws -> InstallResult {
+        let displayName = sanitised(baseConfig.displayName)
+        guard !displayName.isEmpty else { throw Error.invalidDisplayName }
+
+        let target = AppSupport.programFiles(forBundleNamed: displayName)
+        try resetDirectory(target)
+
+        switch source {
+        case .folder(let src):
+            try ensureExists(src, kind: .folder)
+            progress?(.stage("Copying source", detail: src.lastPathComponent))
+            // cp -R preserves the source's name as the top-level entry
+            // under target/, matching the user-spec rule:
+            //   /tmp/MyGame copied into target/  →  target/MyGame/
+            // (so cider.json's exe = "MyGame/start.exe" still resolves).
+            try Shell.run("/bin/cp", ["-R", src.path, target.path], captureOutput: true)
+        case .zip(let zip):
+            try ensureExists(zip, kind: .zip)
+            progress?(.stage("Extracting archive", detail: zip.lastPathComponent))
+            // Whatever the zip contains (flat or with a single top-level
+            // dir) ends up directly under target/. Per the user-spec rule:
+            //   - flat zip      →  target/foo.exe
+            //   - dir-rooted    →  target/MyGame/foo.exe
+            try Shell.run("/usr/bin/unzip", ["-q", zip.path, "-d", target.path], captureOutput: true)
+        case .url:
+            // Phase 5 hooks the download path in here.
+            throw Error.urlSourceRequiresPhase5
+        }
+
+        // cider.json sits in Configs/<name>.json with applicationPath = the
+        // absolute path to the materialised data. The exe path stays
+        // relative to applicationPath, exactly as the user typed it in
+        // the More dialog.
+        let configURL = AppSupport.config(forBundleNamed: displayName)
+        var config = baseConfig
+        config.applicationPath = target.standardizedFileURL.path
+        try config.write(to: configURL)
+
+        progress?(.stage("Done", detail: ""))
+        return InstallResult(
+            configFileURL: configURL,
+            applicationPath: config.applicationPath,
+            mode: .install
+        )
+    }
+
+    // MARK: - Common helpers
+
+    private enum FilesystemKind { case folder, zip }
+
+    private func ensureExists(_ url: URL, kind: FilesystemKind) throws {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else {
+            switch kind {
+            case .folder: throw Error.sourceFolderMissing(url)
+            case .zip:    throw Error.sourceZipMissing(url)
+            }
+        }
+        switch kind {
+        case .folder where !isDir.boolValue:
+            throw Error.sourceFolderMissing(url)
+        case .zip where isDir.boolValue:
+            throw Error.sourceZipMissing(url)
+        default: break
+        }
+    }
+
+    // Wipe + recreate target dir so re-install doesn't merge with stale data.
+    private func resetDirectory(_ url: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: url.path) {
+            try fm.removeItem(at: url)
+        }
+        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+
     // MARK: - Helpers
 
     // Filesystem-safe display name. Mirrors the rule used by
@@ -131,16 +214,22 @@ public struct Installer {
         case notYetImplemented(InstallMode)
         case linkRequiresFolderSource
         case sourceFolderMissing(URL)
+        case sourceZipMissing(URL)
+        case urlSourceRequiresPhase5
         case invalidDisplayName
 
         public var description: String {
             switch self {
             case .notYetImplemented(let m):
-                return "Installer.\(m.rawValue) is not yet implemented (Phase 3/4)."
+                return "Installer.\(m.rawValue) is not yet implemented."
             case .linkRequiresFolderSource:
                 return "Link mode only works with a local folder source."
             case .sourceFolderMissing(let url):
                 return "Source folder doesn't exist: \(url.path)"
+            case .sourceZipMissing(let url):
+                return "Source zip doesn't exist: \(url.path)"
+            case .urlSourceRequiresPhase5:
+                return "URL sources are not yet supported (Phase 5)."
             case .invalidDisplayName:
                 return "Display name is empty."
             }
