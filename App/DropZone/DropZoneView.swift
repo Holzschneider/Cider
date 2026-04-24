@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 
 struct DropZoneView: View {
     @ObservedObject var vm: DropZoneViewModel
-    @State private var hovering: Bool = false
+    @State private var hovering: Bool = false           // dragging over the drop zone
+    @State private var sourceHovering: Bool = false     // pointer over the dropped source
 
     var body: some View {
         VStack(spacing: 18) {
@@ -66,24 +67,11 @@ struct DropZoneView: View {
                         .fill(hovering ? Color.accentColor.opacity(0.08) : Color.clear)
                 )
 
-            VStack(spacing: 10) {
-                Image(systemName: "tray.and.arrow.down")
-                    .font(.system(size: 36, weight: .light))
-                    .foregroundStyle(.secondary)
-                if vm.dropped == .none {
-                    Text("Drop a folder, .zip, or cider.json")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(vm.dropped.displayLabel)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.primary)
-                    Text("Click More… to edit, then Apply.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
+            if let url = vm.dropped.sourceURL {
+                droppedContent(url: url)
+            } else {
+                emptyContent
             }
-            .padding(20)
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $hovering) { providers in
             guard let provider = providers.first else { return false }
@@ -97,6 +85,59 @@ struct DropZoneView: View {
         }
         // SwiftUI's load via NSItemProvider sometimes reads the URL in a
         // background queue; the .onDrop closure must dispatch to main.
+    }
+
+    private var emptyContent: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "tray.and.arrow.down")
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(.secondary)
+            Text("Drop a folder, .zip, or cider.json")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+    }
+
+    private func droppedContent(url: URL) -> some View {
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 10) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 64, height: 64)
+                Text(url.lastPathComponent)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("Double-click to clear")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .opacity(sourceHovering ? 1 : 0)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onHover { sourceHovering = $0 }
+            .onTapGesture(count: 2) { vm.clearSource() }
+
+            if sourceHovering {
+                Button(action: { vm.clearSource() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(Color.black.opacity(0.6)))
+                }
+                .buttonStyle(.plain)
+                .help("Clear")
+                .padding(8)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.12), value: sourceHovering)
     }
 }
 

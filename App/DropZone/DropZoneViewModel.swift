@@ -15,13 +15,17 @@ final class DropZoneViewModel: ObservableObject {
         case bareConfig(URL)        // a plain cider.json — content matters, not path
         case none
 
-        var displayLabel: String {
+        // The on-disk URL we use both for memorisation and (cosmetically)
+        // for fetching the macOS file icon to render in the drop zone.
+        var sourceURL: URL? {
             switch self {
-            case .folder(let url): return "📁  \(url.lastPathComponent)"
-            case .zip(let url):    return "🗜  \(url.lastPathComponent)"
-            case .bareConfig:      return "📄  cider.json (loaded)"
-            case .none:            return ""
+            case .folder(let url), .zip(let url), .bareConfig(let url): return url
+            case .none: return nil
             }
+        }
+
+        var fileName: String? {
+            sourceURL?.lastPathComponent
         }
     }
 
@@ -37,6 +41,14 @@ final class DropZoneViewModel: ObservableObject {
     // Set by DropZoneController so the More dialog can be opened (Phase 9
     // wires the real flow; Phase 8 just stubs it).
     var openMoreDialog: ((CiderConfig?, DroppedSource) -> Void)?
+
+    // Reset to the empty / unconfigured state. Wired to the drop area's
+    // double-click + the hover-revealed ✕ button.
+    func clearSource() {
+        dropped = .none
+        loadedConfig = nil
+        statusMessage = ""
+    }
 
     // Apply / Clone & Apply hooks. Phase 8 fills these in via the controller.
     var apply: (() -> Void)?
