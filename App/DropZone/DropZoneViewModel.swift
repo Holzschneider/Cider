@@ -99,19 +99,27 @@ final class DropZoneViewModel: ObservableObject {
             // Auto-detect cider.json inside the folder.
             let candidate = url.appendingPathComponent("cider.json")
             if fm.fileExists(atPath: candidate.path) {
-                loadConfigFromDisk(candidate, label: "from \(url.lastPathComponent)/cider.json")
+                if tryLoadConfig(from: candidate,
+                                 label: "from \(url.lastPathComponent)/cider.json") {
+                    return
+                }
+                // Parse failed — fall through to "configure from scratch".
+                statusMessage = "Folder's cider.json isn't a valid Cider v2 config — opening More… to configure from scratch."
             } else {
-                loadedConfig = nil
                 statusMessage = "Folder has no cider.json — click More… to configure."
-                openMoreDialog?(nil, dropped)
             }
+            loadedConfig = nil
+            openMoreDialog?(nil, dropped)
             return
         }
 
         switch url.pathExtension.lowercased() {
         case "json":
             dropped = .bareConfig(url)
-            loadConfigFromDisk(url, label: "loaded from \(url.lastPathComponent)")
+            if !tryLoadConfig(from: url, label: "loaded from \(url.lastPathComponent)") {
+                statusMessage = "\(url.lastPathComponent) isn't a valid Cider v2 config — opening More… to configure from scratch."
+                openMoreDialog?(nil, dropped)
+            }
         case "zip":
             dropped = .zip(url)
             if let cfg = peekZipForConfig(url) {
@@ -155,13 +163,18 @@ final class DropZoneViewModel: ObservableObject {
         }
     }
 
-    private func loadConfigFromDisk(_ url: URL, label: String) {
+    // Returns true on a clean v2-schema parse (loadedConfig + status set);
+    // false if the file is missing required fields / malformed (caller
+    // decides whether to surface a friendly fallback message).
+    @discardableResult
+    private func tryLoadConfig(from url: URL, label: String) -> Bool {
         do {
             loadedConfig = try CiderConfig.read(from: url)
             statusMessage = label
+            return true
         } catch {
             loadedConfig = nil
-            statusMessage = "Could not parse cider.json: \(error)"
+            return false
         }
     }
 
