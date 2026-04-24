@@ -67,15 +67,16 @@ public struct Installer {
         let (effectiveSource, effectiveBase) = try await resolveURLSourceIfNeeded(
             source: source, baseConfig: baseConfig, mode: mode, progress: progress
         )
+        try Task.checkCancellation()
         switch mode {
         case .link:
             return try installLink(source: effectiveSource, baseConfig: effectiveBase)
         case .install:
-            return try installInstall(source: effectiveSource, baseConfig: effectiveBase,
-                                      progress: progress)
+            return try await installInstall(source: effectiveSource, baseConfig: effectiveBase,
+                                            progress: progress)
         case .bundle:
-            return try installBundle(source: effectiveSource, baseConfig: effectiveBase,
-                                     bundleURL: bundleURL, progress: progress)
+            return try await installBundle(source: effectiveSource, baseConfig: effectiveBase,
+                                           bundleURL: bundleURL, progress: progress)
         }
     }
 
@@ -183,12 +184,12 @@ public struct Installer {
         source: SourceAcquisition,
         baseConfig: CiderConfig,
         progress: InstallProgressCallback?
-    ) throws -> InstallResult {
+    ) async throws -> InstallResult {
         let displayName = sanitised(baseConfig.displayName)
         guard !displayName.isEmpty else { throw Error.invalidDisplayName }
 
         let target = AppSupport.programFiles(forBundleNamed: displayName)
-        try materialise(source: source, into: target, progress: progress)
+        try await materialise(source: source, into: target, progress: progress)
 
         // cider.json sits in Configs/<name>.json with applicationPath = the
         // absolute path to the materialised data. The exe path stays
@@ -224,12 +225,12 @@ public struct Installer {
         baseConfig: CiderConfig,
         bundleURL: URL,
         progress: InstallProgressCallback?
-    ) throws -> InstallResult {
+    ) async throws -> InstallResult {
         let displayName = sanitised(baseConfig.displayName)
         guard !displayName.isEmpty else { throw Error.invalidDisplayName }
 
         let applicationDir = bundleURL.appendingPathComponent("Application", isDirectory: true)
-        try materialise(source: source, into: applicationDir, progress: progress)
+        try await materialise(source: source, into: applicationDir, progress: progress)
 
         let configURL = bundleURL.appendingPathComponent("cider.json")
         var config = baseConfig
@@ -250,7 +251,8 @@ public struct Installer {
         source: SourceAcquisition,
         into target: URL,
         progress: InstallProgressCallback?
-    ) throws {
+    ) async throws {
+        try Task.checkCancellation()
         try resetDirectory(target)
 
         switch source {
@@ -260,13 +262,13 @@ public struct Installer {
             // cp -R preserves the source's name as the top-level entry
             // under target/, so the user-spec rule holds:
             //   /tmp/MyGame copied into target/  →  target/MyGame/
-            try Shell.run("/bin/cp", ["-R", src.path, target.path], captureOutput: true)
+            try await Shell.runAsync("/bin/cp", ["-R", src.path, target.path], captureOutput: true)
         case .zip(let zip):
             try ensureExists(zip, kind: .zip)
             progress?(.stage("Extracting archive", detail: zip.lastPathComponent))
             // Whatever the zip contains (flat or with a single top-level
             // dir) ends up directly under target/.
-            try Shell.run("/usr/bin/unzip", ["-q", zip.path, "-d", target.path], captureOutput: true)
+            try await Shell.runAsync("/usr/bin/unzip", ["-q", zip.path, "-d", target.path], captureOutput: true)
         case .url:
             // Unreachable: run() resolves `.url` into a local zip via
             // URLSourceResolver before dispatching here.
