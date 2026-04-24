@@ -27,9 +27,20 @@ final class DropZoneController {
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.title = "Cider"
         window.isReleasedWhenClosed = false
-        centerOnScreen(window)
         self.window = window
         window.makeKeyAndOrderFront(nil)
+
+        // SwiftUI's NSHostingController reflows the window's content size
+        // after the window comes onscreen, so any centering we do BEFORE
+        // makeKeyAndOrderFront is computed against a pre-layout frame and
+        // ends up a few pixels off. Force a layout pass, then centre.
+        host.view.layoutSubtreeIfNeeded()
+        centerOnScreen(window)
+        // Defer one more pass to next runloop tick so any post-show
+        // resize from SwiftUI is also accounted for.
+        DispatchQueue.main.async { [weak self] in
+            self?.centerOnScreen(window)
+        }
 
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak vm] event in
             vm?.isOptionPressed = event.modifierFlags.contains(.option)
@@ -42,15 +53,15 @@ final class DropZoneController {
     // geometric centering against the visible area (excluding menu bar
     // and Dock).
     private func centerOnScreen(_ window: NSWindow) {
-        guard let screen = NSScreen.main else {
+        guard let screen = window.screen ?? NSScreen.main else {
             window.center()
             return
         }
         let visible = screen.visibleFrame
         let frame = window.frame
         let origin = NSPoint(
-            x: visible.midX - frame.width / 2,
-            y: visible.midY - frame.height / 2
+            x: (visible.midX - frame.width / 2).rounded(),
+            y: (visible.midY - frame.height / 2).rounded()
         )
         window.setFrameOrigin(origin)
     }
