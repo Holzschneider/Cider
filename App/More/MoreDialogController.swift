@@ -49,7 +49,9 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
         // it after a default init is the source of the focus/cursor
         // weirdness — first responder gets stuck on whatever the default
         // style attached). .resizable so the user can grow it.
-        let initialSize = NSSize(width: 720, height: 820)
+        // Width matches the design's 620pt; height a bit taller to fit
+        // all sections without scrolling on a typical display.
+        let initialSize = NSSize(width: 620, height: 760)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: initialSize),
             styleMask: [.titled, .closable, .resizable],
@@ -60,6 +62,9 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
         window.title = "Cider — Configuration"
         window.isReleasedWhenClosed = false
         window.delegate = self
+        // Force a dark titlebar/back-chrome to match the design palette.
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.titlebarAppearsTransparent = false
         // Force the content area to our explicit size — NSHostingController
         // otherwise picks the SwiftUI MIN size, clipping the buttons.
         window.setContentSize(initialSize)

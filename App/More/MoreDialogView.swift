@@ -3,6 +3,10 @@ import SwiftUI
 import AppKit
 import CiderModels
 
+// Implements the design from cider-settings-dialog/project/Wine Wrapper
+// Configuration.html — macOS-y dark dialog, 620pt wide, 172pt right-aligned
+// label gutter, 14pt row gap, 26pt section gap, sections rendered as
+// `bar | LABEL | bar` with hairline dividers, footer with status dot.
 struct MoreDialogView: View {
     @ObservedObject var vm: MoreDialogViewModel
     var onCancel: () -> Void
@@ -11,60 +15,53 @@ struct MoreDialogView: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: DialogTheme.sectionGap) {
                     basicSection
                     sourceSection
                     engineSection
                     graphicsSection
-                    wineSection
+                    wineOptionsSection
                     presentationSection
                     storageSection
                 }
-                .padding(20)
+                .padding(.top, DialogTheme.bodyTop)
+                .padding(.bottom, DialogTheme.bodyBottom)
+                .padding(.horizontal, DialogTheme.bodyHorizontal)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(DialogTheme.windowBg)
 
-            Divider()
-
-            HStack(spacing: 8) {
-                Spacer()
-                Button("Cancel", action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Button("Save") { onSave(vm.buildConfig()) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!vm.isValid)
-            }
-            .padding(16)
+            footer
         }
+        .background(DialogTheme.windowBg)
     }
 
     // MARK: - Sections
 
     private var basicSection: some View {
         section("Basic") {
-            labeledRow("Display name") {
-                TextField("", text: $vm.displayName,
-                          prompt: Text("e.g. RagnarokPlus"))
+            row("Display name") {
+                TextField("My Windows Game", text: $vm.displayName)
+                    .textFieldStyle(DialogTextFieldStyle())
             }
-            labeledRow("Executable") {
-                TextField("", text: $vm.exe,
-                          prompt: Text("RagnarokPlus/ragnarok-plus-patcher.exe"))
+            row("Executable") {
+                TextField("RagnarokPlus/ragnarok-plus-patcher.exe", text: $vm.exe)
+                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
-            labeledRow("Arguments") {
-                TextField("", text: $vm.argsText,
-                          prompt: Text("/tui /log"))
+            row("Command-line args") {
+                TextField("/tui /log", text: $vm.argsText)
+                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
         }
     }
 
     private var sourceSection: some View {
         section("Source") {
-            labeledRow("Mode") {
+            row("Mode", help: "Where the Windows files live.") {
                 Picker("", selection: $vm.sourceMode) {
-                    Text("Folder / .zip").tag(CiderConfig.Source.Mode.path)
-                    Text("In bundle").tag(CiderConfig.Source.Mode.inBundle)
-                    Text("URL (slim)").tag(CiderConfig.Source.Mode.url)
+                    Text("Folder / .zip on disk").tag(CiderConfig.Source.Mode.path)
+                    Text("Inside this bundle").tag(CiderConfig.Source.Mode.inBundle)
+                    Text("URL (slim mode)").tag(CiderConfig.Source.Mode.url)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -72,24 +69,24 @@ struct MoreDialogView: View {
 
             switch vm.sourceMode {
             case .path:
-                labeledRow("Path") {
+                row("Path") {
                     pathPicker(text: $vm.sourcePath,
-                               placeholder: "/Users/.../MyGame or MyGame.zip",
+                               placeholder: "/Users/me/Games/MyGame or MyGame.zip",
                                filter: .anyContent)
                 }
             case .inBundle:
-                labeledRow("Folder name") {
-                    TextField("", text: $vm.sourceInBundleFolder,
-                              prompt: Text("Game"))
+                row("Folder") {
+                    TextField("Game", text: $vm.sourceInBundleFolder)
+                        .textFieldStyle(DialogTextFieldStyle(monospaced: true))
                 }
             case .url:
-                labeledRow("URL") {
-                    TextField("", text: $vm.sourceURL,
-                              prompt: Text("https://example.com/MyGame.zip"))
+                row("URL") {
+                    TextField("https://example.org/game.zip", text: $vm.sourceURL)
+                        .textFieldStyle(DialogTextFieldStyle(monospaced: true))
                 }
-                labeledRow("SHA-256") {
-                    TextField("", text: $vm.sourceSha256,
-                              prompt: Text("(optional)"))
+                row("Expected SHA-256", help: "Optional — verifies the download.") {
+                    TextField("e3b0c442… (64 hex chars)", text: $vm.sourceSha256)
+                        .textFieldStyle(DialogTextFieldStyle(monospaced: true))
                 }
             }
         }
@@ -97,61 +94,102 @@ struct MoreDialogView: View {
 
     private var engineSection: some View {
         section("Wine engine") {
-            labeledRow("Name") {
-                TextField("", text: $vm.engineName,
-                          prompt: Text("WS12WineCX24.0.7_7"))
+            row("Name") {
+                TextField("WS12WineCX24.0.7_7", text: $vm.engineName)
+                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
-            labeledRow("URL") {
-                TextField("", text: $vm.engineURL,
-                          prompt: Text("https://github.com/Sikarugir-App/Engines/…"))
+            row("Download URL") {
+                TextField("https://github.com/Sikarugir-App/Engines/…", text: $vm.engineURL)
+                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
-            labeledRow("SHA-256") {
-                TextField("", text: $vm.engineSha256,
-                          prompt: Text("(optional)"))
+            row("Expected SHA-256", help: "Optional — verifies the download.") {
+                TextField("e3b0c442… (64 hex chars)", text: $vm.engineSha256)
+                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
         }
     }
 
     private var graphicsSection: some View {
         section("Graphics driver") {
-            Picker("", selection: $vm.graphics) {
-                ForEach(GraphicsDriverKind.allCases, id: \.self) { kind in
-                    Text(label(for: kind)).tag(kind)
+            row("Translator",
+                help: "Translates Direct3D calls to Metal. D3DMetal is the most compatible on recent macOS.") {
+                Picker("", selection: $vm.graphics) {
+                    ForEach(GraphicsDriverKind.allCases, id: \.self) { kind in
+                        Text(label(for: kind)).tag(kind)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
         }
     }
 
-    private var wineSection: some View {
+    private var wineOptionsSection: some View {
         section("Wine options") {
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle("MSYNC (Mach-port sync)", isOn: $vm.wineMsync)
-                Toggle("ESYNC (eventfd sync)", isOn: $vm.wineEsync)
-                Toggle("Wrap exe in cmd.exe (console / TUI apps)", isOn: $vm.wineConsole)
-                Toggle("Inherit cmd console (suppresses pop-up)", isOn: $vm.wineInheritConsole)
+            rowTopAligned("Sync & runtime") {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), alignment: .leading),
+                        GridItem(.flexible(), alignment: .leading)
+                    ],
+                    alignment: .leading,
+                    spacing: 10
+                ) {
+                    Toggle(isOn: $vm.wineMsync) {
+                        toggleLabel("MSYNC", muted: " — Mach-port sync (recommended)")
+                    }
+                    .toggleStyle(.checkbox)
+
+                    Toggle(isOn: $vm.wineEsync) {
+                        toggleLabel("ESYNC", muted: " — eventfd sync (recommended)")
+                    }
+                    .toggleStyle(.checkbox)
+
+                    Toggle(isOn: $vm.wineConsole) {
+                        toggleStackedLabel(
+                            primary: "Wrap .exe in cmd.exe",
+                            secondary: "Console / TUI apps")
+                    }
+                    .toggleStyle(.checkbox)
+
+                    Toggle(isOn: $vm.wineInheritConsole) {
+                        toggleStackedLabel(
+                            primary: "Inherit cmd console",
+                            secondary: "Suppresses the popup window")
+                    }
+                    .toggleStyle(.checkbox)
                     .disabled(!vm.wineConsole)
-                    .padding(.leading, 18)
-                Toggle("Allow winedbg auto-attach (debug only)", isOn: $vm.wineUseWinedbg)
+
+                    Toggle(isOn: $vm.wineUseWinedbg) {
+                        toggleStackedLabel(
+                            primary: "Allow winedbg auto-attach",
+                            secondary: "Debug builds only")
+                    }
+                    .toggleStyle(.checkbox)
+                }
             }
-            labeledRow("Winetricks") {
-                TextField("", text: $vm.winetricksText,
-                          prompt: Text("corefonts d3dx9 vcrun2019"))
+
+            row("Winetricks verbs", help: "Space-separated. Installed once on first launch.") {
+                TextField("corefonts d3dx9 vcrun2019", text: $vm.winetricksText)
+                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
         }
     }
 
     private var presentationSection: some View {
         section("Presentation") {
-            labeledRow("Splash") {
+            row("Splash image") {
                 pathPicker(text: $vm.splashFile,
                            placeholder: "splash.png",
                            filter: .image)
             }
-            Toggle("Splash has alpha (PNG, borderless transparent)",
-                   isOn: $vm.splashTransparent)
-            labeledRow("Icon") {
+            row(" ") {
+                Toggle(isOn: $vm.splashTransparent) {
+                    toggleLabel("Splash has alpha", muted: " (PNG, borderless transparent)")
+                }
+                .toggleStyle(.checkbox)
+            }
+            row("App icon") {
                 pathPicker(text: $vm.iconFile,
                            placeholder: "icon.png or icon.icns",
                            filter: .image)
@@ -161,55 +199,124 @@ struct MoreDialogView: View {
 
     private var storageSection: some View {
         section("Storage") {
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Save cider.json inside the source folder",
-                       isOn: $vm.storeInSourceFolder)
-                Text("""
-                    Off (default): writes to ~/Library/Application Support/Cider/Configs/<bundle-name>.json.
-                    On: writes next to your source files so the source folder is self-distributable.
-                    """)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            rowTopAligned(" ", help: "Off (default): config goes to ~/Library/Application Support/Cider/Configs/<bundle-name>.json.") {
+                Toggle(isOn: $vm.storeInSourceFolder) {
+                    toggleLabel("Save", muted: " cider.json inside the source folder")
+                }
+                .toggleStyle(.checkbox)
             }
         }
     }
 
-    // MARK: - Helpers
+    private var footer: some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(DialogTheme.hairline).frame(height: 0.5)
+            HStack(spacing: 10) {
+                statusPill
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(DialogSecondaryButtonStyle())
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") { onSave(vm.buildConfig()) }
+                    .buttonStyle(DialogPrimaryButtonStyle(enabled: vm.isValid))
+                    .disabled(!vm.isValid)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(
+                LinearGradient(
+                    colors: [DialogTheme.footerBgTop, DialogTheme.footerBgBot],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
+        }
+    }
+
+    private var statusPill: some View {
+        let (label, dot): (String, Color) = vm.isValid
+            ? ("Ready to save", DialogTheme.statusGreen)
+            : ("Fill in display name and source to continue", DialogTheme.statusYellow)
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(dot)
+                .frame(width: 7, height: 7)
+                .overlay(
+                    Circle()
+                        .strokeBorder(dot.opacity(0.35), lineWidth: 2)
+                        .scaleEffect(2)
+                )
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(DialogTheme.textMuted)
+        }
+    }
+
+    // MARK: - Row builders
 
     @ViewBuilder
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        GroupBox(title) {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
+            DialogSectionHeader(title: title)
+            VStack(alignment: .leading, spacing: DialogTheme.rowGap) {
                 content()
             }
-            .padding(.vertical, 6)
+        }
+    }
+
+    @ViewBuilder
+    private func row<Field: View>(
+        _ label: String,
+        help: String? = nil,
+        @ViewBuilder field: () -> Field
+    ) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            DialogRowLabel(text: label)
+            VStack(alignment: .leading, spacing: 6) {
+                field()
+                if let help { DialogHelpText(text: help) }
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func labeledRow<Field: View>(_ label: String, @ViewBuilder field: () -> Field) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(label)
-                .frame(width: 120, alignment: .trailing)
-                .foregroundStyle(.secondary)
-                .font(.system(size: 12))
-            field()
-                .frame(maxWidth: .infinity, alignment: .leading)
+    // For rows whose field is taller than a single row (e.g. a grid of
+    // checkboxes), align the label to the top.
+    @ViewBuilder
+    private func rowTopAligned<Field: View>(
+        _ label: String,
+        help: String? = nil,
+        @ViewBuilder field: () -> Field
+    ) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            DialogRowLabel(text: label)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 6) {
+                field()
+                if let help { DialogHelpText(text: help) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func pathPicker(
-        text: Binding<String>,
-        placeholder: String,
-        filter: FilterKind
-    ) -> some View {
-        HStack(spacing: 6) {
-            TextField("", text: text, prompt: Text(placeholder))
-            Button("Browse…") {
-                openPicker(into: text, filter: filter)
-            }
-            .buttonStyle(.bordered)
+    // MARK: - Misc
+
+    @ViewBuilder
+    private func toggleLabel(_ primary: String, muted: String) -> some View {
+        (Text(primary).foregroundColor(DialogTheme.text)
+         + Text(muted).foregroundColor(DialogTheme.textMuted))
+            .font(.system(size: 13))
+    }
+
+    @ViewBuilder
+    private func toggleStackedLabel(primary: String, secondary: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(primary)
+                .font(.system(size: 13))
+                .foregroundStyle(DialogTheme.text)
+            Text(secondary)
+                .font(.system(size: 11.5))
+                .foregroundStyle(DialogTheme.textMuted)
         }
     }
 
@@ -226,10 +333,19 @@ struct MoreDialogView: View {
         case anyContent
     }
 
-    // NSOpenPanel.runModal collides with the outer NSApp.runModal(for:)
-    // session that hosts MoreDialog (the picker doesn't appear until the
-    // outer modal ends). Attach as a sheet to the key window instead so
-    // the panel runs inside the existing modal session.
+    private func pathPicker(text: Binding<String>, placeholder: String, filter: FilterKind) -> some View {
+        HStack(spacing: 8) {
+            TextField(placeholder, text: text)
+                .textFieldStyle(DialogTextFieldStyle(monospaced: true))
+            Button("Browse…") {
+                openPicker(into: text, filter: filter)
+            }
+            .buttonStyle(DialogSecondaryButtonStyle())
+        }
+    }
+
+    // Sheet attached to the key (More) window so the panel runs inside the
+    // outer NSApp.runModal session — see MoreDialogController for why.
     private func openPicker(into binding: Binding<String>, filter: FilterKind) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
@@ -249,8 +365,6 @@ struct MoreDialogView: View {
                 }
             }
         } else {
-            // Fallback when no key window — runModal works fine if there's
-            // no outer modal session.
             if panel.runModal() == .OK, let url = panel.url {
                 binding.wrappedValue = url.path
             }
