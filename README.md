@@ -4,46 +4,123 @@ Wrap a Windows app as a self-contained, double-clickable macOS `.app`
 bundle backed by Wine.
 
 Cider is **one notarizable `Cider.app`** that is both a GUI launcher *and*
-a CLI tool. Drop a folder, `.zip`, or `cider.json` onto it; fill in the
-configuration form; click **Apply** (rename this bundle in place) or
-hold ⌥ for **Clone & Apply…** (save a configured copy elsewhere). The
-result is a `.app` that — on every launch — shows your splash, ensures
-the right Wine engine is downloaded, sets up a prefix in
-`~/Library/Application Support/Cider/Prefixes/<name>/`, and runs your
-Windows exe through Wine with all the env tweaks (MSYNC/ESYNC, DXMT
-DLLs in both arches, etc.) that real-world games need.
+a CLI tool. Drop a folder, `.zip`, `cider.json`, or a download URL onto
+it; fill in the configuration form; click **Create…** to save a
+configured copy elsewhere, or hold ⌥ for **Apply** (transform this
+bundle in place). The result is a `.app` that — on every launch — shows
+your splash, ensures the right Wine engine is downloaded, sets up a
+prefix in `~/Library/Application Support/Cider/Prefixes/<name>/`, and
+runs your Windows exe through Wine with all the env tweaks (MSYNC/ESYNC,
+DXMT DLLs in both arches, etc.) that real-world games need.
 
 ## Status
 
-Architecture: in-place GUI rewrite. **10/11 planned phases shipped**.
 End-to-end verified against the Sikarugir Wine engines using a 32-bit
-Korean MMO patcher (RagnarokPlus). What's left is full Xcode-project
+Korean MMO patcher (RagnarokPlus). Schema v2 + the full GUI rewrite
+have shipped. What's left for a public release is Xcode-project
 migration + automated notarization (the build script + entitlements
 plist are in place; pulling the trigger on `notarytool` is gated on a
 $99 Apple Developer Program account).
 
+92 unit + integration tests, including in-process HTTP downloads for
+the URL source path and SIGTERM-on-cancel for the install-progress
+sheet.
+
 ## How it works
 
 The `.app` bundle is intentionally tiny — a single `cider` Mach-O plus
-an `Info.plist`. **All heavy state lives outside `Contents/`:**
+an `Info.plist`. **Where heavy state lives depends on the install mode
+you picked in the More dialog:**
+
+| Mode | Where the app's data sits | Where `cider.json` sits |
+| --- | --- | --- |
+| **Install** (default) | `~/Library/Application Support/Cider/Program Files/<name>/` | `…/Configs/<name>.json` |
+| **Bundle** | `<bundle>/Application/` (sibling of `Contents/`) | `<bundle>/cider.json` (sibling of `Contents/`) |
+| **Link** | wherever the user already keeps it (no copy) | `…/Configs/<name>.json`, with an absolute `applicationPath` |
+
+`Bundle` mode is the distributable mode — the `.app` stays
+self-contained and portable across disks/Macs. `Install` is the typical
+"installed app" experience. `Link` is for "I want to keep developing
+this game folder; just point Cider at it."
+
+Wine engines, wrapper templates, and prefixes are always shared in
+`~/Library/Application Support/Cider/`:
 
 | Lives in | What |
 | --- | --- |
-| `~/Library/Application Support/Cider/Engines/` | Sikarugir Wine engines, shared across configured `.app`s |
+| `…/Engines/` | Sikarugir Wine engines, shared across configured `.app`s |
 | `…/Templates/` | Sikarugir wrapper templates (libinotify, libgnutls, MoltenVK, renderer DLLs) |
-| `…/Prefixes/<bundle-name>/` | The Wine prefix per game |
-| `…/Configs/<bundle-name>.json` | The per-bundle `cider.json` (default) |
-| `…/RuntimeStats/<bundle-name>.json` | Rolling stats for the splash's load-progress bar + slim-mode patcher hashes |
-| `…/Cache/Downloads/` | Slim-mode (URL) source payloads |
+| `…/Prefixes/<name>/` | The Wine prefix per app |
+| `…/RuntimeStats/<name>.json` | Rolling stats for the splash's load-progress bar + future patcher hashes |
+| `…/Cache/Downloads/` | Downloaded zip / cider.json payloads from URL sources |
 
 The bundle's name (`Bundle.main.bundleURL.deletingPathExtension()
-.lastPathComponent`) is the key tying it to its config / prefix /
-stats. So renaming the bundle = pointing it at a different game.
+.lastPathComponent`) is the AppSupport key — renaming the bundle =
+pointing it at a different config / prefix / stats slot. The orchestrator
+moves AppSupport assets along with the bundle when you change
+**Application Name** in the More dialog (Phase 10 rename-on-Save).
 
-A bundle can also override AppSupport by placing
-`<bundle>/CiderConfig/cider.json` next to `Contents/`. That folder
-is a sibling of the signed/notarized `Contents/`, so it doesn't break
-codesign — distributors can ship a fully self-contained `.app`.
+A bundle in **Bundle** mode places `cider.json` directly next to
+`Contents/`. That sibling location is outside the codesign seal and
+notarization ticket, so a distributor can ship a fully self-contained
+`.app` without breaking either.
+
+## Configuration (`cider.json`, schema v2)
+
+```json
+{
+  "schemaVersion": 2,
+  "displayName": "My Game",
+  "applicationPath": "Application",
+  "exe": "MyGame/Game.exe",
+  "args": ["/tui", "/log"],
+  "engine": {
+    "name": "WS12WineCX24.0.7_7",
+    "url": "https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineCX24.0.7_7.tar.xz"
+  },
+  "wrapperTemplate": {
+    "version": "1.0.11",
+    "url": "https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.11.tar.xz"
+  },
+  "graphics": "dxmt",
+  "wine": {
+    "esync": true, "msync": true,
+    "console": true, "inheritConsole": false,
+    "useWinedbg": false, "winetricks": []
+  },
+  "splash": { "file": "splash.png", "transparent": true },
+  "icon": "icon.icns",
+  "originURL": "https://example.org/cider.json",
+  "distributionURL": "https://example.org/MyGame.zip"
+}
+```
+
+`applicationPath` is resolved relative to the directory `cider.json`
+itself lives in:
+
+- absolute path → **Link** mode (run the app in place from there)
+- `"Application"` or `"Application/…"` → **Bundle** mode (data inside the
+  `.app` bundle)
+- any other relative path → **Install** mode (data under
+  `AppSupport/Program Files/<name>/`)
+
+`originURL` and `distributionURL` are optional. They get filled in
+automatically when the user drops a remote URL: `originURL` records
+where the dropped `cider.json` came from (if any), `distributionURL`
+records where the data zip came from. Both are reserved for a future
+"check for updates" affordance.
+
+## URL sources
+
+You can drop or paste an `http(s)://` URL onto the drop zone. Cider
+HEADs it to disambiguate via `Content-Type` (with extension fallback):
+
+- **Zip** → downloaded to `AppSupport/Cache/Downloads/`, treated as a
+  local zip from there.
+- **`cider.json`** → fetched, parsed, used to pre-fill the More dialog;
+  its `distributionURL` is followed to download the actual zip.
+
+Drag from a browser, or `Cmd+V` while the drop zone has focus.
 
 ## Build
 
@@ -69,46 +146,6 @@ account and a `notarytool` keychain profile set up):
 
 See `scripts/sign-and-notarize.sh --help` for prereqs.
 
-## Configuration (`cider.json`)
-
-```json
-{
-  "schemaVersion": 1,
-  "displayName": "My Game",
-  "exe": "MyGame/Game.exe",
-  "args": ["/tui", "/log"],
-  "source": {
-    "mode": "path",
-    "path": "/Users/me/Games/MyGame"
-  },
-  "engine": {
-    "name": "WS12WineCX24.0.7_7",
-    "url": "https://github.com/Sikarugir-App/Engines/releases/download/v1.0/WS12WineCX24.0.7_7.tar.xz"
-  },
-  "wrapperTemplate": {
-    "version": "1.0.11",
-    "url": "https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.11.tar.xz"
-  },
-  "graphics": "dxmt",
-  "wine": {
-    "esync": true, "msync": true,
-    "console": true, "inheritConsole": false,
-    "useWinedbg": false, "winetricks": []
-  },
-  "splash": { "file": "splash.png", "transparent": true },
-  "icon": "icon.icns"
-}
-```
-
-`source.mode` can be:
-- `"path"` — folder or `.zip` on disk; **referenced by symlink**, never
-  copied. Cider lazily extracts a `.zip` once into AppSupport.
-- `"inBundle"` — a sibling of `Contents/` inside this `.app`
-  (distributable mode).
-- `"url"` — fetched on first launch into AppSupport's download cache;
-  re-checked every launch via SHA-256 (or ETag/Last-Modified fallback)
-  so Cider doubles as a patcher.
-
 ## CLI surface
 
 ```
@@ -126,30 +163,34 @@ cider preview-splash --image <p>    # (diagnostic) open the splash window only
 
 ```
 .
-├── App/                    # SwiftUI / AppKit GUI + CLI router
-│   ├── CiderApp.swift          # @main entry; dispatches CLI vs GUI
-│   ├── BundleEnvironment.swift # bundle URL / name / writability
-│   ├── AppShell.swift          # shared NSApplication + menu-bar setup
-│   ├── CLI/                    # ArgumentParser subcommands
-│   ├── DropZone/               # vanilla-bundle drag-drop window
-│   ├── More/                   # SwiftUI configuration form
-│   └── Splash/                 # borderless transparent splash + progress
-├── Core/                   # Engine/template/graphics/prefix/wine/etc.
-│   ├── EngineManager.swift     ├── TemplateManager.swift
-│   ├── GraphicsDriver.swift    ├── PrefixInitializer.swift
-│   ├── WineLauncher.swift      ├── ConsoleLineCounter.swift
-│   ├── LaunchPipeline.swift    ├── SourceResolver.swift
-│   ├── BundleTransmogrifier.swift
-│   ├── IconConverter.swift     ├── Downloader.swift
-│   ├── IntegrityChecker.swift  ├── ConfigStore.swift
-│   ├── AppSupport.swift        ├── Logger.swift
-│   └── Shell.swift
-├── Models/                 # CiderConfig + CiderRuntimeStats schemas
+├── App/                        # SwiftUI / AppKit GUI + CLI router
+│   ├── CiderApp.swift              # @main entry; dispatches CLI vs GUI
+│   ├── BundleEnvironment.swift     # bundle URL / name / writability
+│   ├── AppShell.swift              # shared NSApplication + menu-bar setup
+│   ├── CLI/                        # ArgumentParser subcommands
+│   ├── DropZone/                   # vanilla-bundle drag-drop window + Apply/Create orchestrator
+│   ├── More/                       # SwiftUI configuration form (install-mode picker, per-field errors)
+│   ├── Progress/                   # modal install-progress sheet (cancellable)
+│   └── Splash/                     # borderless transparent splash + load-progress overlay
+├── Core/
+│   ├── Installer.swift             # materialises sources for Install / Bundle / Link
+│   ├── URLSourceResolver.swift     # HEAD-based zip / cider.json disambiguation
+│   ├── SourceAcquisition.swift     # what was dropped (folder / zip / URL)
+│   ├── BundleTransmogrifier.swift  # bundle rename + clone + custom icon (CLI)
+│   ├── EngineManager.swift         ├── TemplateManager.swift
+│   ├── GraphicsDriver.swift        ├── PrefixInitializer.swift
+│   ├── WineLauncher.swift          ├── ConsoleLineCounter.swift
+│   ├── LaunchPipeline.swift
+│   ├── IconConverter.swift         ├── Downloader.swift
+│   ├── IntegrityChecker.swift      ├── ConfigStore.swift
+│   ├── AppSupport.swift            ├── Logger.swift
+│   └── Shell.swift                 # sync + cancellable async runners
+├── Models/                     # CiderConfig (schema v2) + CiderRuntimeStats
 ├── Resources/Cider.entitlements    # hardened-runtime entitlements
 ├── scripts/
-│   ├── build-app.sh        # SPM build → signed Cider.app
-│   └── sign-and-notarize.sh # Developer ID + notarytool + stapler
-├── Tests/CiderTests/       # XCTest suite (46+ tests)
+│   ├── build-app.sh                # SPM build → signed Cider.app
+│   └── sign-and-notarize.sh        # Developer ID + notarytool + stapler
+├── Tests/CiderTests/           # 92 XCTest cases
 ├── Package.swift
 └── README.md
 ```

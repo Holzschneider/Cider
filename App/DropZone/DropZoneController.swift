@@ -4,9 +4,10 @@ import SwiftUI
 import CiderModels
 import CiderCore
 
-// Wires the DropZone window to its view-model and the Apply / Clone & Apply
+// Wires the DropZone window to its view-model and the Create / Apply
 // actions. Listens for option-key flag changes via NSEvent and forwards
-// them into the view-model so the primary button label can swap live.
+// them into the view-model so the primary button label can swap live
+// (default is Create…; ALT swaps to Apply).
 @MainActor
 final class DropZoneController {
     private let vm = DropZoneViewModel()

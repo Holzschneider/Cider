@@ -6,7 +6,7 @@ import CiderCore
 
 // State driving the drop-zone window. Holds the memorised source URL,
 // any pre-loaded cider.json from the drop, and the option-key state for
-// the Apply ↔ Clone & Apply button label.
+// the Create… ↔ Apply button-label swap.
 @MainActor
 final class DropZoneViewModel: ObservableObject {
     enum DroppedSource: Equatable {

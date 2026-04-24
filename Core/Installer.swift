@@ -323,7 +323,6 @@ public struct Installer {
     }
 
     public enum Error: Swift.Error, CustomStringConvertible {
-        case notYetImplemented(InstallMode)
         case linkRequiresFolderSource
         case sourceFolderMissing(URL)
         case sourceZipMissing(URL)
@@ -332,8 +331,6 @@ public struct Installer {
 
         public var description: String {
             switch self {
-            case .notYetImplemented(let m):
-                return "Installer.\(m.rawValue) is not yet implemented."
             case .linkRequiresFolderSource:
                 return "Link mode only works with a local folder source."
             case .sourceFolderMissing(let url):

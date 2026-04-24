@@ -2,7 +2,7 @@ import Foundation
 import CiderModels
 
 // Turns a vanilla `Cider.app` into a configured `<DisplayName>.app` by:
-//   1. Renaming (Apply) or copying (Clone & Apply) the bundle.
+//   1. Renaming (Apply) or copying (Create) the bundle.
 //   2. Removing any stale CiderConfig/ override so the new config wins.
 //   3. Persisting cider.json to the chosen storage:
 //        - .appSupport         → ~/Library/Application Support/Cider/Configs/<bundle-name>.json
