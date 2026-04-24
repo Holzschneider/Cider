@@ -27,7 +27,7 @@ final class DropZoneController {
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.title = "Cider"
         window.isReleasedWhenClosed = false
-        window.center()
+        centerOnScreen(window)
         self.window = window
         window.makeKeyAndOrderFront(nil)
 
@@ -35,6 +35,24 @@ final class DropZoneController {
             vm?.isOptionPressed = event.modifierFlags.contains(.option)
             return event
         }
+    }
+
+    // NSWindow.center() biases the window toward the upper third of the
+    // screen ("alert area" convention). For a primary window we want true
+    // geometric centering against the visible area (excluding menu bar
+    // and Dock).
+    private func centerOnScreen(_ window: NSWindow) {
+        guard let screen = NSScreen.main else {
+            window.center()
+            return
+        }
+        let visible = screen.visibleFrame
+        let frame = window.frame
+        let origin = NSPoint(
+            x: visible.midX - frame.width / 2,
+            y: visible.midY - frame.height / 2
+        )
+        window.setFrameOrigin(origin)
     }
 
     deinit {
