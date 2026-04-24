@@ -207,20 +207,4 @@ final class InstallerBundleTests: XCTestCase {
                        "Bundle mode must not modify Contents/")
     }
 
-    func testBundleRejectsURLSourceUntilPhase5() async {
-        let url = URL(string: "https://example.org/game.zip")!
-        do {
-            _ = try await Installer().run(
-                source: .url(url),
-                mode: .bundle,
-                baseConfig: sampleConfig("Game.exe"),
-                bundleURL: bundleURL
-            )
-            XCTFail("expected urlSourceRequiresPhase5")
-        } catch Installer.Error.urlSourceRequiresPhase5 {
-            // expected
-        } catch {
-            XCTFail("expected urlSourceRequiresPhase5, got \(error)")
-        }
-    }
 }

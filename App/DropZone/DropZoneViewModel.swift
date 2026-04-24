@@ -13,19 +13,30 @@ final class DropZoneViewModel: ObservableObject {
         case folder(URL)            // memorised path, NOT copied per UX spec
         case zip(URL)               // memorised path
         case bareConfig(URL)        // a plain cider.json — content matters, not path
+        case url(URL)               // remote URL (zip, or cider.json indirection)
         case none
 
         // The on-disk URL we use both for memorisation and (cosmetically)
         // for fetching the macOS file icon to render in the drop zone.
+        // Returns nil for remote URLs since they have no file icon.
         var sourceURL: URL? {
             switch self {
             case .folder(let url), .zip(let url), .bareConfig(let url): return url
-            case .none: return nil
+            case .url, .none: return nil
             }
         }
 
-        var fileName: String? {
-            sourceURL?.lastPathComponent
+        // Display-friendly label for the dropped item (file name for local,
+        // host+path for remote URLs).
+        var label: String? {
+            switch self {
+            case .folder(let url), .zip(let url), .bareConfig(let url):
+                return url.lastPathComponent
+            case .url(let url):
+                return url.absoluteString
+            case .none:
+                return nil
+            }
         }
     }
 
@@ -61,6 +72,15 @@ final class DropZoneViewModel: ObservableObject {
 
     func handleDrop(_ url: URL) {
         statusMessage = ""
+
+        // Web URLs (http/https) take the URL-source path: HEAD-disambiguate
+        // and either record the URL for the Installer to download, or
+        // (for cider.json) fetch + pre-populate MoreDialog.
+        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            handleWebURL(url)
+            return
+        }
+
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else {
@@ -97,7 +117,35 @@ final class DropZoneViewModel: ObservableObject {
                 openMoreDialog?(nil, dropped)
             }
         default:
-            statusMessage = "Unsupported drop: \(url.lastPathComponent). Drop a folder, .zip, or cider.json."
+            statusMessage = "Unsupported drop: \(url.lastPathComponent). Drop a folder, .zip, cider.json, or a URL."
+        }
+    }
+
+    // MARK: - Web URL handling (Phase 5)
+
+    private func handleWebURL(_ url: URL) {
+        dropped = .url(url)
+        loadedConfig = nil
+        statusMessage = "Resolving \(url.absoluteString)…"
+        Task { @MainActor in
+            do {
+                let resolved = try await URLSourceResolver.resolve(url: url)
+                switch resolved {
+                case .zip:
+                    statusMessage = "URL points at a zip — click More… to configure, then Apply to download and install."
+                    openMoreDialog?(nil, dropped)
+                case .ciderJSON(let cfg, let dataURL, _):
+                    loadedConfig = cfg
+                    if dataURL == nil {
+                        statusMessage = "Loaded cider.json from \(url.absoluteString) — but it has no distributionURL. Add one in More… before applying."
+                        openMoreDialog?(cfg, dropped)
+                    } else {
+                        statusMessage = "Loaded cider.json from \(url.absoluteString)."
+                    }
+                }
+            } catch {
+                statusMessage = "Could not resolve URL: \(error)"
+            }
         }
     }
 

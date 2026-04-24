@@ -17,8 +17,13 @@ import Foundation
 //           cider.json sits in AppSupport/Configs/<name>.json.
 //
 // `originURL` is the optional URL the cider.json itself was originally
-// fetched from (used for a future "check for updates" affordance — Phase
-// 5 sets it when the user drops a remote cider.json URL).
+// fetched from (set when the user drops a remote cider.json URL — used
+// for a future "check for updates" affordance).
+//
+// `distributionURL` is the optional URL of the data zip. Set when a
+// cider.json-at-URL referenced a zip elsewhere (drop-URL indirection,
+// Phase 5), and preserved so the bundle knows where its data came from
+// (future patcher / re-install mechanism).
 public struct CiderConfig: Codable, Equatable {
     public static let currentSchemaVersion = 2
 
@@ -34,6 +39,7 @@ public struct CiderConfig: Codable, Equatable {
     public var splash: Splash?
     public var icon: String?
     public var originURL: String?
+    public var distributionURL: String?
 
     public init(
         schemaVersion: Int = CiderConfig.currentSchemaVersion,
@@ -47,7 +53,8 @@ public struct CiderConfig: Codable, Equatable {
         wine: WineOptions = .default,
         splash: Splash? = nil,
         icon: String? = nil,
-        originURL: String? = nil
+        originURL: String? = nil,
+        distributionURL: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.displayName = displayName
@@ -61,6 +68,7 @@ public struct CiderConfig: Codable, Equatable {
         self.splash = splash
         self.icon = icon
         self.originURL = originURL
+        self.distributionURL = distributionURL
     }
 
     public struct EngineRef: Codable, Equatable {

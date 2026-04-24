@@ -181,20 +181,4 @@ final class InstallerInstallTests: XCTestCase {
             atPath: target.appendingPathComponent("Fresh/start.exe").path))
     }
 
-    func testInstallRejectsURLSourceUntilPhase5() async {
-        let url = URL(string: "https://example.org/game.zip")!
-        do {
-            _ = try await Installer().run(
-                source: .url(url),
-                mode: .install,
-                baseConfig: sampleConfig("Game.exe"),
-                bundleURL: URL(fileURLWithPath: "/tmp/Test.app")
-            )
-            XCTFail("expected urlSourceRequiresPhase5")
-        } catch Installer.Error.urlSourceRequiresPhase5 {
-            // expected
-        } catch {
-            XCTFail("expected urlSourceRequiresPhase5, got \(error)")
-        }
-    }
 }

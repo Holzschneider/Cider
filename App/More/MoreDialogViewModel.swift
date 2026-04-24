@@ -140,6 +140,14 @@ final class MoreDialogViewModel: ObservableObject {
             if displayName.isEmpty {
                 displayName = url.deletingPathExtension().lastPathComponent
             }
+        case .url(let url):
+            // Remote URL: applicationPath stays whatever the user / fetched
+            // cider.json already filled in. Just guess a display name from
+            // the URL's last path component if nothing is set yet.
+            if displayName.isEmpty {
+                let stem = url.deletingPathExtension().lastPathComponent
+                displayName = stem.isEmpty ? (url.host ?? "") : stem
+            }
         case .bareConfig, .none:
             break
         }

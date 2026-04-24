@@ -58,14 +58,78 @@ public struct Installer {
         bundleURL: URL,
         progress: InstallProgressCallback? = nil
     ) async throws -> InstallResult {
+        // Phase 5: a remote URL source is resolved here (outside the
+        // mode-specific paths). The result is always a local zip that
+        // the downstream install/bundle code can unzip like any other
+        // dropped archive. For link mode this is nonsensical — link
+        // requires a local folder — so we pass through and let
+        // installLink reject it.
+        let (effectiveSource, effectiveBase) = try await resolveURLSourceIfNeeded(
+            source: source, baseConfig: baseConfig, mode: mode, progress: progress
+        )
         switch mode {
         case .link:
-            return try installLink(source: source, baseConfig: baseConfig)
+            return try installLink(source: effectiveSource, baseConfig: effectiveBase)
         case .install:
-            return try installInstall(source: source, baseConfig: baseConfig, progress: progress)
+            return try installInstall(source: effectiveSource, baseConfig: effectiveBase,
+                                      progress: progress)
         case .bundle:
-            return try installBundle(source: source, baseConfig: baseConfig,
+            return try installBundle(source: effectiveSource, baseConfig: effectiveBase,
                                      bundleURL: bundleURL, progress: progress)
+        }
+    }
+
+    // MARK: - URL resolution (Phase 5)
+
+    // For non-link modes: turn a `.url(URL)` source into a local zip on
+    // disk. Handles both the direct-zip case and the cider.json
+    // indirection case. Records originURL + distributionURL on the
+    // baseConfig so the persisted cider.json carries the provenance.
+    private func resolveURLSourceIfNeeded(
+        source: SourceAcquisition,
+        baseConfig: CiderConfig,
+        mode: InstallMode,
+        progress: InstallProgressCallback?
+    ) async throws -> (SourceAcquisition, CiderConfig) {
+        guard case .url(let url) = source, mode != .link else {
+            return (source, baseConfig)
+        }
+        progress?(.stage("Resolving URL", detail: url.absoluteString))
+        let resolved = try await URLSourceResolver.resolve(url: url) { p in
+            // Surface Downloader byte-progress as a simple fraction. The
+            // Installer's `progress` callback distinguishes stage vs
+            // fraction; reporting both keeps the UI honest.
+            if p.total > 0 {
+                let frac = Double(p.bytes) / Double(p.total)
+                progress?(.fraction(min(max(frac, 0), 1)))
+            }
+        }
+        switch resolved {
+        case .zip(let local):
+            var cfg = baseConfig
+            cfg.distributionURL = url.absoluteString
+            return (.zip(local), cfg)
+
+        case .ciderJSON(_, let dataURL, let originURL):
+            guard let dataURL else {
+                throw URLSourceResolver.Error.ciderJSONWithoutDistributionURL(originURL)
+            }
+            progress?(.stage("Downloading app data", detail: dataURL.absoluteString))
+            let nested = try await URLSourceResolver.resolve(url: dataURL) { p in
+                if p.total > 0 {
+                    let frac = Double(p.bytes) / Double(p.total)
+                    progress?(.fraction(min(max(frac, 0), 1)))
+                }
+            }
+            guard case .zip(let local) = nested else {
+                // A cider.json's distributionURL that itself returns
+                // cider.json is almost certainly a loop; refuse to chase.
+                throw URLSourceResolver.Error.undecidableContent(dataURL, contentType: "application/json")
+            }
+            var cfg = baseConfig
+            cfg.originURL = originURL.absoluteString
+            cfg.distributionURL = dataURL.absoluteString
+            return (.zip(local), cfg)
         }
     }
 
@@ -204,9 +268,9 @@ public struct Installer {
             // dir) ends up directly under target/.
             try Shell.run("/usr/bin/unzip", ["-q", zip.path, "-d", target.path], captureOutput: true)
         case .url:
-            // Phase 5 hooks the download path in here (downloads to
-            // AppSupport/Cache, then routes through the .zip path above).
-            throw Error.urlSourceRequiresPhase5
+            // Unreachable: run() resolves `.url` into a local zip via
+            // URLSourceResolver before dispatching here.
+            throw Error.urlSourceNotResolved
         }
     }
 
@@ -261,7 +325,7 @@ public struct Installer {
         case linkRequiresFolderSource
         case sourceFolderMissing(URL)
         case sourceZipMissing(URL)
-        case urlSourceRequiresPhase5
+        case urlSourceNotResolved
         case invalidDisplayName
 
         public var description: String {
@@ -274,8 +338,8 @@ public struct Installer {
                 return "Source folder doesn't exist: \(url.path)"
             case .sourceZipMissing(let url):
                 return "Source zip doesn't exist: \(url.path)"
-            case .urlSourceRequiresPhase5:
-                return "URL sources are not yet supported (Phase 5)."
+            case .urlSourceNotResolved:
+                return "Internal error: URL source should have been resolved before dispatch."
             case .invalidDisplayName:
                 return "Display name is empty."
             }

@@ -73,15 +73,52 @@ struct DropZoneView: View {
                 emptyContent
             }
         }
-        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $hovering) { providers in
+        .onDrop(of: [UTType.fileURL.identifier,
+                     UTType.url.identifier,
+                     UTType.plainText.identifier],
+                isTargeted: $hovering) { providers in
             guard let provider = providers.first else { return false }
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url else { return }
-                Task { @MainActor in
-                    vm.handleDrop(url)
+            // File URLs come through fileURL; web URLs (Safari drag, etc.)
+            // arrive as UTType.url; pasted text drags arrive as plainText.
+            // Try fileURL first, then URL.self (covers both file and web),
+            // then plain text parsed as a URL.
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in vm.handleDrop(url) }
                 }
+                return true
+            }
+            if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in vm.handleDrop(url) }
+                }
+                return true
+            }
+            _ = provider.loadObject(ofClass: NSString.self) { text, _ in
+                guard let text = text as? String,
+                      let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines))
+                else { return }
+                Task { @MainActor in vm.handleDrop(url) }
             }
             return true
+        }
+        .onPasteCommand(of: [UTType.url.identifier, UTType.plainText.identifier]) { providers in
+            guard let provider = providers.first else { return }
+            if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in vm.handleDrop(url) }
+                }
+                return
+            }
+            _ = provider.loadObject(ofClass: NSString.self) { text, _ in
+                guard let text = text as? String,
+                      let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines))
+                else { return }
+                Task { @MainActor in vm.handleDrop(url) }
+            }
         }
         // SwiftUI's load via NSItemProvider sometimes reads the URL in a
         // background queue; the .onDrop closure must dispatch to main.
@@ -92,7 +129,7 @@ struct DropZoneView: View {
             Image(systemName: "tray.and.arrow.down")
                 .font(.system(size: 36, weight: .light))
                 .foregroundStyle(.secondary)
-            Text("Drop a folder, .zip, or cider.json")
+            Text("Drop a folder, .zip, cider.json, or a URL")
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
         }
