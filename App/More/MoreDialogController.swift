@@ -27,6 +27,11 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
     }
 
     private func runModal() -> Outcome {
+        // Capture the soon-to-be-displaced key window (typically the
+        // drop-zone) so we can centre our modal *on* it rather than at
+        // the middle of the screen.
+        let parentWindow = NSApp.keyWindow
+
         let view = MoreDialogView(
             vm: vm,
             onCancel: { [weak self] in
@@ -43,9 +48,8 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
         // Build the window with the right style mask up-front (mutating
         // it after a default init is the source of the focus/cursor
         // weirdness — first responder gets stuck on whatever the default
-        // style attached). .resizable so the user can grow the window if
-        // the default 720pt height isn't enough on smaller displays.
-        let initialSize = NSSize(width: 620, height: 720)
+        // style attached). .resizable so the user can grow it.
+        let initialSize = NSSize(width: 720, height: 820)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: initialSize),
             styleMask: [.titled, .closable, .resizable],
@@ -56,10 +60,14 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
         window.title = "Cider — Configuration"
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.center()
         // Force the content area to our explicit size — NSHostingController
         // otherwise picks the SwiftUI MIN size, clipping the buttons.
         window.setContentSize(initialSize)
+
+        // Position the modal window centred on the parent (drop zone /
+        // splash) instead of the middle of the screen, so the user's eye
+        // doesn't have to jump.
+        positionWindow(window, centeredOn: parentWindow)
         self.window = window
 
         // Make sure the modal window actually becomes key BEFORE runModal
@@ -70,6 +78,24 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
         NSApp.runModal(for: window)
         window.orderOut(nil)
         return outcome
+    }
+
+    private func positionWindow(_ window: NSWindow, centeredOn parent: NSWindow?) {
+        let frame = window.frame
+        let target: NSRect
+        if let parent {
+            target = parent.frame
+        } else if let screen = NSScreen.main {
+            target = screen.visibleFrame
+        } else {
+            window.center()
+            return
+        }
+        let origin = NSPoint(
+            x: target.midX - frame.width / 2,
+            y: target.midY - frame.height / 2
+        )
+        window.setFrameOrigin(origin)
     }
 
     private func endModal() {
