@@ -10,7 +10,7 @@ import Foundation
 //  - The last verified hashes for slim-mode (engine + source) so the patcher
 //    can detect upstream changes without re-downloading every launch
 public struct CiderRuntimeStats: Codable, Equatable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
     public static let rollingWindow = 5
 
     public var schemaVersion: Int
@@ -18,22 +18,19 @@ public struct CiderRuntimeStats: Codable, Equatable {
     public var loadLineCount: LoadLineCount
     public var engineCache: CachedArtifact?
     public var templateCache: CachedArtifact?
-    public var sourceCache: CachedArtifact?
 
     public init(
         schemaVersion: Int = CiderRuntimeStats.currentSchemaVersion,
         prefixInitialised: Bool = false,
         loadLineCount: LoadLineCount = LoadLineCount(),
         engineCache: CachedArtifact? = nil,
-        templateCache: CachedArtifact? = nil,
-        sourceCache: CachedArtifact? = nil
+        templateCache: CachedArtifact? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.prefixInitialised = prefixInitialised
         self.loadLineCount = loadLineCount
         self.engineCache = engineCache
         self.templateCache = templateCache
-        self.sourceCache = sourceCache
     }
 
     // Per-artifact provenance metadata used by IntegrityChecker for the

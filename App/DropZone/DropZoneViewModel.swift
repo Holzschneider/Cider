@@ -34,9 +34,8 @@ final class DropZoneViewModel: ObservableObject {
     @Published var statusMessage: String = ""
     @Published var isOptionPressed: Bool = false
 
-    // Surfaced from MoreDialog's "Store cider.json in the source folder"
-    // checkbox; consumed by the controller when transmogrifying.
-    var storeInSourceFolderPreferred: Bool = false
+    // (storeInSourceFolderPreferred removed in schema-v2; Phase 6
+    // re-introduces storage choice via the install-mode picker.)
 
     // Set by DropZoneController so the More dialog can be opened (Phase 9
     // wires the real flow; Phase 8 just stubs it).

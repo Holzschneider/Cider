@@ -86,9 +86,8 @@ final class DropZoneController {
         ) { [weak self] outcome in
             guard let self else { return }
             switch outcome {
-            case .saved(let cfg, let storeInSource):
+            case .saved(let cfg):
                 self.vm.loadedConfig = cfg
-                self.vm.storeInSourceFolderPreferred = storeInSource
                 self.vm.statusMessage = "Configured \"\(cfg.displayName)\" — click Apply to land it."
             case .cancelled:
                 break
@@ -114,22 +113,10 @@ final class DropZoneController {
         runTransmogrification(config: cfg, mode: .cloneTo(dest))
     }
 
-    // Decide where to write cider.json based on the user's MoreDialog
-    // preference + which source mode is active. "Store in source folder"
-    // only makes sense for mode=.path; otherwise we fall through to
-    // AppSupport.
+    // Schema-v2: storage is always AppSupport for now. Phase 6 brings the
+    // install-mode picker which surfaces Bundle / Install / Link.
     private func computeStorage(for config: CiderConfig) -> BundleTransmogrifier.ConfigStorage {
-        if vm.storeInSourceFolderPreferred,
-           config.source.mode == .path,
-           let path = config.source.path {
-            let url = URL(fileURLWithPath: path)
-            var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
-               isDir.boolValue {
-                return .sourceFolder(url)
-            }
-        }
-        return .appSupport
+        .appSupport
     }
 
     // If the configured icon path is a PNG (or non-icns), convert it to

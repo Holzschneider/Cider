@@ -16,8 +16,8 @@ final class BundleTransmogrifierTests: XCTestCase {
     private func sampleConfig(_ displayName: String) -> CiderConfig {
         CiderConfig(
             displayName: displayName,
+            applicationPath: "App",
             exe: "Game.exe",
-            source: .init(mode: .path, path: "/tmp/source"),
             engine: .init(name: "WS12WineCX24.0.7_7", url: "https://example.com/x.tar.xz"),
             graphics: .dxmt
         )
@@ -43,9 +43,10 @@ final class BundleTransmogrifierTests: XCTestCase {
         XCTAssertEqual(result.finalBundleURL.lastPathComponent, "My Game.app")
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.finalBundleURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: bundle.path))
-        XCTAssertEqual(
-            result.configWrittenTo.lastPathComponent, "cider.json")
-        XCTAssertTrue(result.configWrittenTo.path.contains("CiderConfig"))
+        // Schema-v2: in-bundle override is at <bundle>/cider.json directly
+        // (no CiderConfig/ subdir).
+        XCTAssertEqual(result.configWrittenTo,
+                       result.finalBundleURL.appendingPathComponent("cider.json"))
         let loaded = try CiderConfig.read(from: result.configWrittenTo)
         XCTAssertEqual(loaded.displayName, "My Game")
     }
@@ -70,10 +71,8 @@ final class BundleTransmogrifierTests: XCTestCase {
     func testCloneWipesStaleInBundleOverrideWhenStorageIsAppSupport() throws {
         let dir = tmpDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let original = try makeFakeBundle(in: dir)
-        // Pre-seed a stale CiderConfig/ override on the source.
-        let staleOverride = original.appendingPathComponent("CiderConfig", isDirectory: true)
-        try FileManager.default.createDirectory(at: staleOverride, withIntermediateDirectories: true)
-        try sampleConfig("Stale").write(to: staleOverride.appendingPathComponent("cider.json"))
+        // Pre-seed a stale top-level cider.json on the source (v2 location).
+        try sampleConfig("Stale").write(to: original.appendingPathComponent("cider.json"))
 
         let dest = dir.appendingPathComponent("Out.app")
         let result = try BundleTransmogrifier(
@@ -83,8 +82,8 @@ final class BundleTransmogrifierTests: XCTestCase {
         ).transmogrify(mode: .cloneTo(dest))
 
         XCTAssertFalse(FileManager.default.fileExists(
-            atPath: dest.appendingPathComponent("CiderConfig/cider.json").path),
-            "stale override should have been wiped on clone with appSupport storage"
+            atPath: dest.appendingPathComponent("cider.json").path),
+            "stale in-bundle cider.json should have been wiped on clone with appSupport storage"
         )
         XCTAssertTrue(result.configWrittenTo.path.contains("Application Support/Cider/Configs/"),
                       "appSupport storage should write under AppSupport")

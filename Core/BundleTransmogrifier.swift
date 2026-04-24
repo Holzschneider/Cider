@@ -23,7 +23,6 @@ public struct BundleTransmogrifier {
     public enum ConfigStorage: Equatable {
         case appSupport
         case inBundleOverride
-        case sourceFolder(URL)
     }
 
     public struct Result {
@@ -82,12 +81,17 @@ public struct BundleTransmogrifier {
             resultBundle = dest
         }
 
-        // Wipe any stale in-bundle override that came along on a clone, so
-        // we don't accidentally keep loading the source bundle's config.
-        let staleOverride = resultBundle.appendingPathComponent("CiderConfig", isDirectory: true)
+        // Wipe any stale in-bundle cider.json that came along on a clone,
+        // so we don't accidentally keep loading the source bundle's config.
+        let staleOverride = resultBundle.appendingPathComponent("cider.json")
         if storage != .inBundleOverride,
            FileManager.default.fileExists(atPath: staleOverride.path) {
             try FileManager.default.removeItem(at: staleOverride)
+        }
+        // Belt-and-braces: also delete the v1 CiderConfig/ directory.
+        let v1OverrideDir = resultBundle.appendingPathComponent("CiderConfig", isDirectory: true)
+        if FileManager.default.fileExists(atPath: v1OverrideDir.path) {
+            try FileManager.default.removeItem(at: v1OverrideDir)
         }
 
         // Persist config.
@@ -124,11 +128,9 @@ public struct BundleTransmogrifier {
         case .appSupport:
             url = AppSupport.config(forBundleNamed: bundleName)
         case .inBundleOverride:
-            url = bundle
-                .appendingPathComponent("CiderConfig", isDirectory: true)
-                .appendingPathComponent("cider.json")
-        case .sourceFolder(let dir):
-            url = dir.appendingPathComponent("cider.json")
+            // Schema-v2: in-bundle override sits at <bundle>/cider.json
+            // (sibling of Contents/), not in a CiderConfig/ subdirectory.
+            url = bundle.appendingPathComponent("cider.json")
         }
         try config.write(to: url)
         return url

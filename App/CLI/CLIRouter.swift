@@ -64,7 +64,7 @@ enum GUIEntry {
             )
             controller?.onDoubleClick = { [weak controller] in
                 MoreDialogController.present(prefill: cfg, dropped: .none) { outcome in
-                    guard case .saved(let updated, _) = outcome else { return }
+                    guard case .saved(let updated) = outcome else { return }
                     do {
                         switch resolved.source {
                         case .inBundleOverride(let url):
@@ -85,6 +85,7 @@ enum GUIEntry {
                 controller?.attach()
                 runLaunchPipeline(
                     config: cfg,
+                    configFileURL: configFileURL(for: resolved.source),
                     bundleURL: env.bundleURL,
                     bundleName: env.bundleName,
                     splash: controller
@@ -101,6 +102,13 @@ enum GUIEntry {
         switch source {
         case .inBundleOverride(let url): return url.deletingLastPathComponent()
         case .appSupport(let url): return url.deletingLastPathComponent()
+        }
+    }
+
+    private static func configFileURL(for source: ConfigStore.Resolved.Source) -> URL {
+        switch source {
+        case .inBundleOverride(let url): return url
+        case .appSupport(let url): return url
         }
     }
 
@@ -142,12 +150,14 @@ enum GUIEntry {
     // so we exit() if non-zero).
     private static func runLaunchPipeline(
         config: CiderConfig,
+        configFileURL: URL,
         bundleURL: URL,
         bundleName: String,
         splash: SplashController?
     ) {
         let pipeline = LaunchPipeline(
             config: config,
+            configFileURL: configFileURL,
             bundleURL: bundleURL,
             bundleName: bundleName,
             progress: { title, detail, fraction in
@@ -433,8 +443,14 @@ extension Cider {
                     "cider launch: no config for bundle '\(env.bundleName)'.\n".utf8))
                 throw ExitCode(1)
             }
+            let configFile: URL
+            switch resolved.source {
+            case .inBundleOverride(let url): configFile = url
+            case .appSupport(let url): configFile = url
+            }
             let pipeline = LaunchPipeline(
                 config: resolved.config,
+                configFileURL: configFile,
                 bundleURL: env.bundleURL,
                 bundleName: env.bundleName,
                 progress: { title, detail, fraction in

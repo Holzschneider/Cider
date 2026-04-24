@@ -16,6 +16,7 @@ public enum AppSupport {
     public static var templates: URL { root.appendingPathComponent("Templates", isDirectory: true) }
     public static var prefixes: URL { root.appendingPathComponent("Prefixes", isDirectory: true) }
     public static var configs: URL { root.appendingPathComponent("Configs", isDirectory: true) }
+    public static var programFiles: URL { root.appendingPathComponent("Program Files", isDirectory: true) }
     public static var runtimeStats: URL { root.appendingPathComponent("RuntimeStats", isDirectory: true) }
     public static var downloadCache: URL {
         root.appendingPathComponent("Cache", isDirectory: true)
@@ -28,6 +29,13 @@ public enum AppSupport {
 
     public static func config(forBundleNamed name: String) -> URL {
         configs.appendingPathComponent("\(name).json")
+    }
+
+    // The directory Install / Link mode uses for a given bundle name. For
+    // Install, this contains the copied/extracted source. For Link, this
+    // is empty (the cider.json's applicationPath points elsewhere).
+    public static func programFiles(forBundleNamed name: String) -> URL {
+        programFiles.appendingPathComponent(name, isDirectory: true)
     }
 
     public static func runtimeStats(forBundleNamed name: String) -> URL {

@@ -22,7 +22,8 @@ struct MoreDialogView: View {
                     graphicsSection
                     wineOptionsSection
                     presentationSection
-                    storageSection
+                    // Storage section removed in Phase 1 — Phase 6 reintroduces
+                    // it as the install-mode picker (Install / Bundle / Link).
                 }
                 .padding(.top, DialogTheme.bodyTop)
                 .padding(.bottom, DialogTheme.bodyBottom)
@@ -62,38 +63,16 @@ struct MoreDialogView: View {
     }
 
     private var sourceSection: some View {
-        section("Source") {
-            row("Mode", help: "Where the Windows files live.") {
-                Picker("", selection: $vm.sourceMode) {
-                    Text("Folder / .zip on disk").tag(CiderConfig.Source.Mode.path)
-                    Text("Inside this bundle").tag(CiderConfig.Source.Mode.inBundle)
-                    Text("URL (slim mode)").tag(CiderConfig.Source.Mode.url)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+        section("Application") {
+            row("Path",
+                help: "Absolute path → Link mode (run in place). Relative → resolved against the cider.json's location (Install or Bundle mode). Phase 6 turns this into the proper install-mode picker.") {
+                pathPicker(text: $vm.applicationPath,
+                           placeholder: "/Users/me/Games/MyGame",
+                           filter: .anyContent)
             }
-
-            switch vm.sourceMode {
-            case .path:
-                row("Path") {
-                    pathPicker(text: $vm.sourcePath,
-                               placeholder: "/Users/me/Games/MyGame or MyGame.zip",
-                               filter: .anyContent)
-                }
-            case .inBundle:
-                row("Folder") {
-                    TextField("Game", text: $vm.sourceInBundleFolder)
-                        .textFieldStyle(DialogTextFieldStyle(monospaced: true))
-                }
-            case .url:
-                row("URL") {
-                    TextField("https://example.org/game.zip", text: $vm.sourceURL)
-                        .textFieldStyle(DialogTextFieldStyle(monospaced: true))
-                }
-                row("Expected SHA-256", help: "Optional — verifies the download.") {
-                    TextField("e3b0c442… (64 hex chars)", text: $vm.sourceSha256)
-                        .textFieldStyle(DialogTextFieldStyle(monospaced: true))
-                }
+            row("Origin URL", help: "Optional — set automatically when a remote cider.json was dropped.") {
+                TextField("(none)", text: $vm.originURL)
+                    .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
         }
     }
@@ -253,17 +232,6 @@ struct MoreDialogView: View {
                 pathPicker(text: $vm.iconFile,
                            placeholder: "icon.png or icon.icns",
                            filter: .image)
-            }
-        }
-    }
-
-    private var storageSection: some View {
-        section("Storage") {
-            rowTopAligned(" ", help: "Off (default): config goes to ~/Library/Application Support/Cider/Configs/<bundle-name>.json.") {
-                Toggle(isOn: $vm.storeInSourceFolder) {
-                    toggleLabel("Save", muted: " cider.json inside the source folder")
-                }
-                .toggleStyle(.checkbox)
             }
         }
     }

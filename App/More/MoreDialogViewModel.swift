@@ -2,10 +2,13 @@ import Foundation
 import Combine
 import CiderModels
 
-// Form state for MoreDialog. One-to-one mapping with CiderConfig fields,
-// flattened for direct SwiftUI binding (args → "argsText" joined by space,
-// winetricks list → "winetricksText" joined by space). The fromConfig()
-// and buildConfig() round-trip between this and CiderConfig.
+// Schema-v2 form state for MoreDialog. The "source" half of the v1 schema
+// (mode/path/url/inBundleFolder/sha256) is gone — the user picks an
+// install mode at config time and the result is captured as a single
+// `applicationPath` (relative or absolute) in cider.json.
+//
+// For Phase 1 the install-mode picker isn't built yet (Phase 6); the form
+// shows a single editable Application path that the user can adjust.
 @MainActor
 final class MoreDialogViewModel: ObservableObject {
     // Basic
@@ -13,12 +16,11 @@ final class MoreDialogViewModel: ObservableObject {
     @Published var exe: String = ""
     @Published var argsText: String = ""
 
-    // Source
-    @Published var sourceMode: CiderConfig.Source.Mode = .path
-    @Published var sourcePath: String = ""
-    @Published var sourceInBundleFolder: String = "Game"
-    @Published var sourceURL: String = ""
-    @Published var sourceSha256: String = ""
+    // Application directory (resolved on launch). Relative or absolute.
+    // Phase 6 will hide this behind the install-mode picker; for now it's
+    // editable so we can keep the schema testable end-to-end.
+    @Published var applicationPath: String = ""
+    @Published var originURL: String = ""
 
     // Engine
     @Published var engineName: String = ""
@@ -26,9 +28,6 @@ final class MoreDialogViewModel: ObservableObject {
     @Published var engineSha256: String = ""
 
     // Engine catalogue (per-row state for the "Wine engine" section).
-    // The user toggles `useCustomRepository`; when off, the standard
-    // Sikarugir Engines page URL is shown read-only and is what we list
-    // against. When on, `customRepositoryURL` is editable.
     @Published var useCustomRepository: Bool = false
     @Published var customRepositoryURL: String = ""
     @Published var availableEngines: [EngineCatalog.Entry] = []
@@ -42,8 +41,6 @@ final class MoreDialogViewModel: ObservableObject {
             : EngineCatalog.defaultRepositoryPageURL
     }
 
-    // Re-runs the catalog fetch for the current effectiveRepositoryURL.
-    // No-ops if a fetch for the same URL is already in flight.
     func refreshEngineCatalog(initial: Bool = false) {
         let url = effectiveRepositoryURL
         guard !url.isEmpty else {
@@ -60,9 +57,6 @@ final class MoreDialogViewModel: ObservableObject {
                 let entries = try await EngineCatalog.fetch(repositoryPageURL: url)
                 guard let self else { return }
                 self.availableEngines = entries
-                // Pick a sensible default the FIRST time we populate the
-                // list (or any time the engineName is empty / no longer
-                // present in the new catalog).
                 if initial || self.engineName.isEmpty
                    || !entries.contains(where: { $0.name == self.engineName }) {
                     if let pick = EngineCatalog.suggestedDefault(from: entries) {
@@ -101,23 +95,13 @@ final class MoreDialogViewModel: ObservableObject {
     @Published var splashTransparent: Bool = true
     @Published var iconFile: String = ""
 
-    // Storage choice: default to AppSupport; toggling on stores cider.json
-    // in the source folder so distributors can ship a folder that carries
-    // its own config.
-    @Published var storeInSourceFolder: Bool = false
-
     // MARK: - Round-trip
 
     func load(from config: CiderConfig) {
         displayName = config.displayName
+        applicationPath = config.applicationPath
         exe = config.exe
         argsText = config.args.joined(separator: " ")
-
-        sourceMode = config.source.mode
-        sourcePath = config.source.path ?? ""
-        sourceInBundleFolder = config.source.inBundleFolder ?? "Game"
-        sourceURL = config.source.url ?? ""
-        sourceSha256 = config.source.sha256 ?? ""
 
         engineName = config.engine.name
         engineURL = config.engine.url
@@ -139,19 +123,20 @@ final class MoreDialogViewModel: ObservableObject {
         splashFile = config.splash?.file ?? ""
         splashTransparent = config.splash?.transparent ?? true
         iconFile = config.icon ?? ""
+        originURL = config.originURL ?? ""
     }
 
-    // Seed sensible defaults from a folder/zip drop. Called when the user
-    // drops something that has no embedded cider.json.
+    // Seed sensible defaults from a folder/zip drop. Until Phase 2-4 wire
+    // the Installer up, applicationPath is just the dropped item's name —
+    // good enough for Link mode and a sensible starting point for the
+    // proper install-mode picker in Phase 6.
     func seed(fromDrop dropped: DropZoneViewModel.DroppedSource) {
         switch dropped {
         case .folder(let url):
-            sourceMode = .path
-            sourcePath = url.path
+            applicationPath = url.path  // absolute → Link-mode default
             if displayName.isEmpty { displayName = url.lastPathComponent }
         case .zip(let url):
-            sourceMode = .path
-            sourcePath = url.path
+            applicationPath = url.path  // absolute, but no on-disk dir; Phase 3 will install
             if displayName.isEmpty {
                 displayName = url.deletingPathExtension().lastPathComponent
             }
@@ -161,11 +146,9 @@ final class MoreDialogViewModel: ObservableObject {
     }
 
     // Returns the URL the user can browse for an executable, or nil if
-    // browsing isn't applicable (mode != .path, empty path, missing on
-    // disk). Folders → NSOpenPanel. Zips → unzip-l listing dialog.
+    // browsing isn't applicable (path empty / not on disk).
     var sourceForBrowsing: URL? {
-        guard sourceMode == .path else { return nil }
-        let trimmed = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = applicationPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let url = URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
         var isDir: ObjCBool = false
@@ -177,15 +160,9 @@ final class MoreDialogViewModel: ObservableObject {
     func buildConfig() -> CiderConfig {
         CiderConfig(
             displayName: displayName.trimmingCharacters(in: .whitespaces),
+            applicationPath: applicationPath.trimmingCharacters(in: .whitespaces),
             exe: exe.trimmingCharacters(in: .whitespaces),
             args: tokenise(argsText),
-            source: CiderConfig.Source(
-                mode: sourceMode,
-                path: sourceMode == .path ? emptyToNil(sourcePath) : nil,
-                inBundleFolder: sourceMode == .inBundle ? emptyToNil(sourceInBundleFolder) : nil,
-                url: sourceMode == .url ? emptyToNil(sourceURL) : nil,
-                sha256: emptyToNil(sourceSha256)
-            ),
             engine: CiderConfig.EngineRef(
                 name: engineName.trimmingCharacters(in: .whitespaces),
                 url: engineURL.trimmingCharacters(in: .whitespaces),
@@ -209,7 +186,8 @@ final class MoreDialogViewModel: ObservableObject {
                 file: splashFile,
                 transparent: splashTransparent
             ),
-            icon: emptyToNil(iconFile)
+            icon: emptyToNil(iconFile),
+            originURL: emptyToNil(originURL)
         )
     }
 
@@ -218,15 +196,7 @@ final class MoreDialogViewModel: ObservableObject {
         !exe.trimmingCharacters(in: .whitespaces).isEmpty &&
         !engineName.trimmingCharacters(in: .whitespaces).isEmpty &&
         !engineURL.trimmingCharacters(in: .whitespaces).isEmpty &&
-        sourceHasPayload
-    }
-
-    private var sourceHasPayload: Bool {
-        switch sourceMode {
-        case .path: return !sourcePath.trimmingCharacters(in: .whitespaces).isEmpty
-        case .inBundle: return !sourceInBundleFolder.trimmingCharacters(in: .whitespaces).isEmpty
-        case .url: return !sourceURL.trimmingCharacters(in: .whitespaces).isEmpty
-        }
+        !applicationPath.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private func emptyToNil(_ s: String) -> String? {

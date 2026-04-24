@@ -6,8 +6,8 @@ final class ConfigStoreTests: XCTestCase {
     private func sample(_ name: String) -> CiderConfig {
         CiderConfig(
             displayName: name,
+            applicationPath: "App",
             exe: "Game.exe",
-            source: .init(mode: .path, path: "/tmp/x"),
             engine: .init(name: "WS12WineCX24.0.7_7", url: "https://example.com/x.tar.xz"),
             graphics: .dxmt
         )

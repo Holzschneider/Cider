@@ -19,7 +19,7 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
     private static var active: MoreDialogController?
 
     enum Outcome {
-        case saved(CiderConfig, storeInSourceFolder: Bool)
+        case saved(CiderConfig)
         case cancelled
     }
 
@@ -48,7 +48,7 @@ final class MoreDialogController: NSObject, NSWindowDelegate {
             // pool early.
             onCancel: { self.finish(.cancelled) },
             onSave: { cfg in
-                self.finish(.saved(cfg, storeInSourceFolder: self.vm.storeInSourceFolder))
+                self.finish(.saved(cfg))
             }
         )
         let host = NSHostingController(rootView: view)

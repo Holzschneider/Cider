@@ -13,6 +13,7 @@ public final class LaunchPipeline {
     public typealias ErrorCallback = @Sendable (Swift.Error) -> Void
 
     public let config: CiderConfig
+    public let configFileURL: URL          // location the cider.json was loaded from
     public let bundleURL: URL
     public let bundleName: String
 
@@ -22,6 +23,7 @@ public final class LaunchPipeline {
 
     public init(
         config: CiderConfig,
+        configFileURL: URL,
         bundleURL: URL,
         bundleName: String,
         progress: @escaping ProgressCallback,
@@ -29,6 +31,7 @@ public final class LaunchPipeline {
         onError: @escaping ErrorCallback
     ) {
         self.config = config
+        self.configFileURL = configFileURL
         self.bundleURL = bundleURL
         self.bundleName = bundleName
         self.progress = progress
@@ -43,19 +46,17 @@ public final class LaunchPipeline {
         var stats = CiderRuntimeStats.loadOrDefault(
             from: AppSupport.runtimeStats(forBundleNamed: bundleName))
 
-        // 1. Resolve source.
-        progress("Resolving source", config.source.mode.rawValue, nil)
-        let sourceResult = try await SourceResolver(
-            bundleURL: bundleURL,
-            bundleName: bundleName
-        ).resolve(
-            config.source,
-            priorCache: stats.sourceCache,
-            progress: { p in self.report(p, asTitle: "Downloading source") }
-        )
-        if let updated = sourceResult.updatedCacheMeta {
-            stats.sourceCache = updated
+        // 1. Resolve application directory from cider.json's applicationPath
+        //    (relative to the cider.json's own location, or absolute for
+        //    Link mode). Validate it exists — Phase 9 surfaces this as an
+        //    in-form error; for now we throw.
+        let applicationDir = config.resolvedApplicationDirectory(configFile: configFileURL)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: applicationDir.path, isDirectory: &isDir),
+              isDir.boolValue else {
+            throw PipelineError.applicationDirectoryMissing(applicationDir)
         }
+        progress("Resolved source", applicationDir.lastPathComponent, nil)
 
         // 2. Engine.
         progress("Preparing engine", config.engine.name, nil)
@@ -91,7 +92,7 @@ public final class LaunchPipeline {
         // 6. Stage payload (symlinks).
         progress("Linking source into prefix", "", nil)
         let winExePath = try prefixInit.stagePayload(
-            from: sourceResult.directory,
+            from: applicationDir,
             exeRelativePath: config.exe,
             programName: bundleName,
             mode: .symlinks
@@ -199,6 +200,16 @@ public final class LaunchPipeline {
             let dest = engineRoot.appendingPathComponent(entry.lastPathComponent)
             if FileManager.default.fileExists(atPath: dest.path) { continue }
             try Shell.run("/bin/cp", ["-a", entry.path, dest.path], captureOutput: true)
+        }
+    }
+}
+
+public enum PipelineError: Swift.Error, CustomStringConvertible {
+    case applicationDirectoryMissing(URL)
+    public var description: String {
+        switch self {
+        case .applicationDirectoryMissing(let url):
+            return "Application directory missing: \(url.path)"
         }
     }
 }

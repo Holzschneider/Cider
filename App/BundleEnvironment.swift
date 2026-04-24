@@ -34,13 +34,15 @@ public struct BundleEnvironment {
     // and Finder custom-icon metadata live.
     public var bundleRoot: URL { bundleURL }
 
-    // The optional in-bundle config override directory.
-    public var inBundleConfigDir: URL {
-        bundleURL.appendingPathComponent("CiderConfig", isDirectory: true)
+    // Schema-v2: in-bundle override is a single cider.json sibling of
+    // Contents/, not a CiderConfig/ subdirectory.
+    public var inBundleConfigFile: URL {
+        bundleURL.appendingPathComponent("cider.json")
     }
 
-    public var inBundleConfigFile: URL {
-        inBundleConfigDir.appendingPathComponent("cider.json")
+    // Bundle-mode application data lives in <bundle>/Application/.
+    public var bundleApplicationDir: URL {
+        bundleURL.appendingPathComponent("Application", isDirectory: true)
     }
 
     public var appSupportConfigFile: URL {

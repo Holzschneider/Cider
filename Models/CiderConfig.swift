@@ -1,73 +1,66 @@
 import Foundation
 
-// Schema for cider.json — the per-bundle configuration. Located via
-// ConfigStore (in-bundle override → AppSupport-by-name).
+// Schema v2 (clean break from v1).
+//
+// cider.json describes how to LAUNCH a configured Windows app. It does NOT
+// remember how the app's files were originally provided (folder / zip /
+// URL) — that's a configuration-time concern handled by the Installer.
+//
+// `applicationPath` is resolved relative to the directory the cider.json
+// itself lives in:
+//   - Bundle install: cider.json at <bundle>/cider.json,
+//                     applicationPath like "Application/MyGame".
+//   - Install (AppSupport): cider.json at AppSupport/Configs/<name>.json,
+//                           applicationPath like "MyGame" (resolved against
+//                           AppSupport/Program Files/<name>/).
+//   - Link: applicationPath is an absolute path to an external folder; the
+//           cider.json sits in AppSupport/Configs/<name>.json.
+//
+// `originURL` is the optional URL the cider.json itself was originally
+// fetched from (used for a future "check for updates" affordance — Phase
+// 5 sets it when the user drops a remote cider.json URL).
 public struct CiderConfig: Codable, Equatable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public var schemaVersion: Int
     public var displayName: String
+    public var applicationPath: String
     public var exe: String
     public var args: [String]
-    public var source: Source
     public var engine: EngineRef
     public var wrapperTemplate: TemplateRef
     public var graphics: GraphicsDriverKind
     public var wine: WineOptions
     public var splash: Splash?
     public var icon: String?
+    public var originURL: String?
 
     public init(
         schemaVersion: Int = CiderConfig.currentSchemaVersion,
         displayName: String,
+        applicationPath: String,
         exe: String,
         args: [String] = [],
-        source: Source,
         engine: EngineRef,
         wrapperTemplate: TemplateRef = .default,
         graphics: GraphicsDriverKind,
         wine: WineOptions = .default,
         splash: Splash? = nil,
-        icon: String? = nil
+        icon: String? = nil,
+        originURL: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.displayName = displayName
+        self.applicationPath = applicationPath
         self.exe = exe
         self.args = args
-        self.source = source
         self.engine = engine
         self.wrapperTemplate = wrapperTemplate
         self.graphics = graphics
         self.wine = wine
         self.splash = splash
         self.icon = icon
-    }
-
-    public struct Source: Codable, Equatable {
-        public enum Mode: String, Codable {
-            case path
-            case inBundle
-            case url
-        }
-        public var mode: Mode
-        public var path: String?
-        public var inBundleFolder: String?
-        public var url: String?
-        public var sha256: String?
-
-        public init(
-            mode: Mode,
-            path: String? = nil,
-            inBundleFolder: String? = nil,
-            url: String? = nil,
-            sha256: String? = nil
-        ) {
-            self.mode = mode
-            self.path = path
-            self.inBundleFolder = inBundleFolder
-            self.url = url
-            self.sha256 = sha256
-        }
+        self.originURL = originURL
     }
 
     public struct EngineRef: Codable, Equatable {
@@ -93,8 +86,6 @@ public struct CiderConfig: Codable, Equatable {
             self.sha256 = sha256
         }
 
-        // Default tracks the version Cider has been validated against;
-        // Cider will follow this unless a per-bundle config overrides it.
         public static let `default` = TemplateRef(
             version: "1.0.11",
             url: "https://github.com/Sikarugir-App/Wrapper/releases/download/v1.0/Template-1.0.11.tar.xz"
@@ -139,8 +130,29 @@ public struct CiderConfig: Codable, Equatable {
     }
 }
 
-// Pretty-print + parse helpers. JSON is stored sorted, indented for
-// human-editable cider.json files.
+// MARK: - Resolution
+
+public extension CiderConfig {
+    // Resolves `applicationPath` against the cider.json's own location.
+    // Absolute paths (Link mode) are returned as-is.
+    func resolvedApplicationDirectory(configFile: URL) -> URL {
+        if applicationPath.hasPrefix("/") {
+            return URL(fileURLWithPath: applicationPath)
+        }
+        let configDir = configFile.deletingLastPathComponent()
+        return configDir.appendingPathComponent(applicationPath, isDirectory: true)
+    }
+
+    // Resolves `exe` (relative path inside the application directory) to
+    // an absolute on-disk URL.
+    func resolvedExecutable(configFile: URL) -> URL {
+        resolvedApplicationDirectory(configFile: configFile)
+            .appendingPathComponent(exe)
+    }
+}
+
+// MARK: - JSON I/O
+
 public extension CiderConfig {
     static let encoder: JSONEncoder = {
         let e = JSONEncoder()
