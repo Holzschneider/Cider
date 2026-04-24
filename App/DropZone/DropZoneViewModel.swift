@@ -63,14 +63,17 @@ final class DropZoneViewModel: ObservableObject {
         statusMessage = ""
     }
 
-    // Apply / Clone & Apply hooks. Phase 8 fills these in via the controller.
-    var apply: (() -> Void)?
-    var cloneAndApply: (() -> Void)?
+    // Phase-8 swap: default action is "Create…" (clone-to-new-bundle via
+    // NSSavePanel), ALT-held is "Apply" (in-place transformation of the
+    // running Cider.app). The names swap on screen as the user holds /
+    // releases ALT.
+    var create: (() -> Void)?
+    var applyInPlace: (() -> Void)?
 
     var canApply: Bool { loadedConfig != nil }
 
     var primaryButtonLabel: String {
-        isOptionPressed ? "Clone & Apply…" : "Apply"
+        isOptionPressed ? "Apply" : "Create…"
     }
 
     func handleDrop(_ url: URL) {

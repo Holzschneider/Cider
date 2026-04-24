@@ -40,9 +40,9 @@ struct DropZoneView: View {
 
                 Button(vm.primaryButtonLabel) {
                     if vm.isOptionPressed {
-                        vm.cloneAndApply?()
+                        vm.applyInPlace?()
                     } else {
-                        vm.apply?()
+                        vm.create?()
                     }
                 }
                 .keyboardShortcut(.return, modifiers: [])
