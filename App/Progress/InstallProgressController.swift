@@ -23,7 +23,12 @@ import CiderCore
 enum InstallProgressController {
 
     enum Outcome<T> {
-        case success(T)
+        // Work succeeded. `choice` is the user's pick from the post-
+        // completion button bar (Run / OpenInFinder / Close / Revert)
+        // when the caller passed `showsCompletionChoices: true`; nil
+        // when the sheet auto-dismissed without showing the bar
+        // (legacy Apply mode).
+        case completed(T, choice: InstallProgressModel.CompletionChoice?)
         case cancelled
         case failure(Swift.Error)
     }
@@ -31,9 +36,11 @@ enum InstallProgressController {
     static func run<T>(
         parent: NSWindow?,
         title: String = "Configuring Cider",
+        showsCompletionChoices: Bool = false,
         work: @escaping @Sendable (@escaping InstallProgressCallback) async throws -> T
     ) async -> Outcome<T> {
         let model = InstallProgressModel()
+        model.showsCompletionChoices = showsCompletionChoices
         let sheet = SheetHost(model: model, title: title)
         sheet.present(over: parent)
 
@@ -45,18 +52,43 @@ enum InstallProgressController {
             }
         }
 
+        // Live ALT-state for the Run / Open in Finder swap. Also drives
+        // the drop zone's existing primary-button swap, so installing a
+        // local monitor here is harmless.
+        let altMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            model.isOptionPressed = event.modifierFlags.contains(.option)
+            return event
+        }
+        defer {
+            if let altMonitor { NSEvent.removeMonitor(altMonitor) }
+        }
+
         // Pin the work in a Task so the Cancel button can cancel it.
         let task = Task<T, Swift.Error> {
             try await work(progress)
         }
         model.onCancel = { task.cancel() }
 
-        defer { sheet.dismiss() }
-
         do {
             let value = try await task.value
-            return .success(value)
+            // Work finished without throwing. Two paths:
+            //   1. caller wants the post-completion bar → flip the
+            //      sheet into "succeeded" state and wait for the user.
+            //   2. caller doesn't → dismiss + return immediately.
+            if showsCompletionChoices {
+                model.completionState = .succeeded
+                let choice = await withCheckedContinuation { (cont: CheckedContinuation<InstallProgressModel.CompletionChoice, Never>) in
+                    model.onCompletionChoice = { c in cont.resume(returning: c) }
+                }
+                sheet.dismiss()
+                return .completed(value, choice: choice)
+            } else {
+                sheet.dismiss()
+                return .completed(value, choice: nil)
+            }
         } catch is CancellationError {
+            model.completionState = .cancelled
+            sheet.dismiss()
             return .cancelled
         } catch {
             // A SIGTERM'd subprocess surfaces as a non-cancellation error
@@ -64,8 +96,12 @@ enum InstallProgressController {
             // own state so the caller doesn't show "install failed" when
             // the user explicitly aborted.
             if model.isCancelling {
+                model.completionState = .cancelled
+                sheet.dismiss()
                 return .cancelled
             }
+            model.completionState = .failed(message: String(describing: error))
+            sheet.dismiss()
             return .failure(error)
         }
     }

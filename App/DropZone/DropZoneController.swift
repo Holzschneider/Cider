@@ -138,9 +138,19 @@ final class DropZoneController {
         }
 
         let currentBundle = bundleEnv.bundleURL
+        // Create flow shows the post-completion button bar so the user
+        // can decide to launch / reveal / close / revert. Apply (in
+        // place) keeps the legacy auto-launch — by the time the work
+        // succeeds the running bundle has already been mutated, so
+        // there's nothing to choose between.
+        let showsCompletionChoices: Bool = {
+            if case .cloneTo = target { return true } else { return false }
+        }()
+
         let outcome = await InstallProgressController.run(
             parent: window,
-            title: title(for: target)
+            title: title(for: target),
+            showsCompletionChoices: showsCompletionChoices
         ) { progress in
             try await Self.performApply(
                 plan: plan,
@@ -152,21 +162,71 @@ final class DropZoneController {
         }
 
         switch outcome {
-        case .success(let finalBundle):
-            // Relaunch the (renamed/cloned) bundle, then quit.
-            let openProcess = Process()
-            openProcess.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            openProcess.arguments = ["-n", finalBundle.path]
-            try? openProcess.run()
-            NSApplication.shared.terminate(nil)
+        case .completed(let finalBundle, .none):
+            // Apply mode → auto-relaunch and quit.
+            launchAndQuit(finalBundle)
+
+        case .completed(let finalBundle, .some(let choice)):
+            handleCompletionChoice(choice, finalBundle: finalBundle, plan: plan)
+
         case .cancelled:
             vm.statusMessage = "Cancelled."
+
         case .failure(let error):
-            // Phase 9: auto-reopen MoreDialog with the failure surfaced
-            // as a banner. Lets the user fix the offending field and try
+            // Auto-reopen MoreDialog with the failure surfaced as a
+            // banner so the user can fix the offending field and try
             // again without retyping everything.
             reopenMoreDialogWithError(plan: plan, error: error)
         }
+    }
+
+    private func launchAndQuit(_ bundle: URL) {
+        let openProcess = Process()
+        openProcess.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        openProcess.arguments = ["-n", bundle.path]
+        try? openProcess.run()
+        NSApplication.shared.terminate(nil)
+    }
+
+    private func handleCompletionChoice(
+        _ choice: InstallProgressModel.CompletionChoice,
+        finalBundle: URL,
+        plan: InstallPlan
+    ) {
+        switch choice {
+        case .run:
+            launchAndQuit(finalBundle)
+        case .openInFinder:
+            NSWorkspace.shared.activateFileViewerSelecting([finalBundle])
+            NSApplication.shared.terminate(nil)
+        case .close:
+            NSApplication.shared.terminate(nil)
+        case .revert:
+            revertCreate(finalBundle: finalBundle, plan: plan)
+        }
+    }
+
+    // Removes the artefacts a successful Create produced. The shared
+    // wine prefix is left alone (other bundles may be using it) and
+    // engine / template caches stay (expensive to redownload). The
+    // Drop Zone window stays up so the user can re-attempt with a
+    // different name or mode.
+    private func revertCreate(finalBundle: URL, plan: InstallPlan) {
+        let fm = FileManager.default
+        try? fm.removeItem(at: finalBundle)
+
+        let name = BundleTransmogrifier.sanitiseBundleName(plan.config.displayName)
+        if !name.isEmpty {
+            try? fm.removeItem(at: AppSupport.config(forBundleNamed: name))
+            if plan.mode == .install {
+                try? fm.removeItem(at: AppSupport.programFiles(forBundleNamed: name))
+            }
+        }
+
+        vm.installPlan = nil
+        vm.loadedConfig = nil
+        vm.dropped = .none
+        vm.statusMessage = "Reverted — drop a folder, .zip, or URL to start again."
     }
 
     private func reopenMoreDialogWithError(plan: InstallPlan, error: Swift.Error) {

@@ -24,6 +24,25 @@ final class InstallProgressModel: ObservableObject {
         var state: PhaseState
     }
 
+    // Overall sheet state machine. `running` while work is in flight;
+    // transitions to `succeeded` when work returns, at which point the
+    // Create flow swaps the Cancel button for the post-completion bar
+    // (Revert / Run Application / Close).
+    enum CompletionState: Equatable {
+        case running
+        case succeeded
+        case cancelled
+        case failed(message: String)
+    }
+
+    // What the user clicked from the post-completion button bar.
+    enum CompletionChoice {
+        case run
+        case openInFinder
+        case close
+        case revert
+    }
+
     // Phase list (empty for legacy callers that never emit
     // .phasesDeclared).
     @Published var phases: [Phase] = []
@@ -34,7 +53,18 @@ final class InstallProgressModel: ObservableObject {
     @Published var fraction: Double? = nil
 
     @Published var isCancelling: Bool = false
+    @Published var completionState: CompletionState = .running
+
+    // Whether to show the post-completion button bar at all. Apply
+    // mode keeps the legacy "auto-launch on success" behaviour and
+    // leaves this false.
+    var showsCompletionChoices: Bool = false
+    // Live ALT-key state — the Run Application button morphs into
+    // Open in Finder when held.
+    @Published var isOptionPressed: Bool = false
+
     var onCancel: (() -> Void)?
+    var onCompletionChoice: ((CompletionChoice) -> Void)?
 
     func apply(_ event: InstallProgress) {
         switch event {
@@ -77,6 +107,11 @@ final class InstallProgressModel: ObservableObject {
         isCancelling = true
         onCancel?()
     }
+
+    func chooseCompletion(_ choice: CompletionChoice) {
+        guard completionState == .succeeded else { return }
+        onCompletionChoice?(choice)
+    }
 }
 
 struct InstallProgressSheet: View {
@@ -91,17 +126,43 @@ struct InstallProgressSheet: View {
                 phaseChecklist
             }
 
+            buttonBar
+        }
+        .padding(22)
+        .frame(width: 460)
+    }
+
+    // MARK: - Button bar
+
+    @ViewBuilder
+    private var buttonBar: some View {
+        switch model.completionState {
+        case .running, .cancelled, .failed:
             HStack {
                 Spacer()
                 Button(model.isCancelling ? "Cancelling…" : "Cancel") {
                     model.requestCancel()
                 }
                 .keyboardShortcut(.cancelAction)
-                .disabled(model.isCancelling)
+                .disabled(model.isCancelling
+                          || model.completionState != .running)
             }
+        case .succeeded where model.showsCompletionChoices:
+            HStack(spacing: 10) {
+                Button("Revert") { model.chooseCompletion(.revert) }
+                Spacer()
+                Button(model.isOptionPressed ? "Open in Finder" : "Run Application") {
+                    model.chooseCompletion(model.isOptionPressed ? .openInFinder : .run)
+                }
+                .keyboardShortcut(.defaultAction)
+                Button("Close") { model.chooseCompletion(.close) }
+            }
+        case .succeeded:
+            // No-completion-choices path (Apply mode): show nothing —
+            // the controller will dismiss the sheet immediately on
+            // success and the orchestrator handles the relaunch.
+            EmptyView()
         }
-        .padding(22)
-        .frame(width: 460)
     }
 
     // MARK: - Header (stage label, detail, optional bar from
