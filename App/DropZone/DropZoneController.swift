@@ -81,6 +81,12 @@ final class DropZoneController {
         vm.applyInPlace = { [weak self] in self?.startApplyInPlace() }
     }
 
+    // Public hook for the menu's Settings… (Cmd-,) item. Same UX as
+    // clicking the drop zone's "Configure" button.
+    func openSettings() {
+        openMoreDialog(prefill: vm.loadedConfig, dropped: vm.dropped)
+    }
+
     private func openMoreDialog(prefill: CiderConfig?, dropped: DropZoneViewModel.DroppedSource) {
         MoreDialogController.present(
             prefill: prefill ?? vm.loadedConfig,

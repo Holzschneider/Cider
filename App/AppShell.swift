@@ -2,21 +2,35 @@ import Foundation
 import AppKit
 
 // Shared AppKit setup used by every GUI entry point (splash, drop zone,
-// later the More dialog). Avoids each controller redoing the same
-// activation-policy / menu-bar / run-loop dance.
+// More dialog). Avoids each controller redoing the same activation-policy
+// / menu-bar / run-loop dance.
 @MainActor
 final class AppShell: NSObject, NSApplicationDelegate {
     private var setup: ((NSApplication) -> Void)?
+    private var settingsAction: (() -> Void)?
 
     // Blocking. Builds the menu bar, calls `setup` once AppKit is up, and
     // runs the event loop until the user quits.
+    //
+    //   - appName: drives the application menu items ("About <appName>",
+    //     "Hide <appName>", "Quit <appName>"). Pass the configured
+    //     Application Name (CiderConfig.displayName for a configured
+    //     bundle) so the menu reflects the launched product, not the
+    //     `cider` process. Falls back to ProcessInfo.processName when nil.
+    //   - onSettings: when non-nil, adds a "Settings…" item with Cmd-,
+    //     that calls this closure. Both the drop-zone and the configured-
+    //     bundle entry points wire it to MoreDialog.
     func run(activationPolicy: NSApplication.ActivationPolicy = .regular,
+             appName: String? = nil,
+             onSettings: (() -> Void)? = nil,
              setup: @escaping (NSApplication) -> Void) {
         self.setup = setup
+        self.settingsAction = onSettings
         let app = NSApplication.shared
         app.setActivationPolicy(activationPolicy)
         app.delegate = self
-        installMenuBar(app: app)
+        installMenuBar(app: app, appName: appName ?? ProcessInfo.processInfo.processName,
+                       hasSettings: onSettings != nil)
         app.run()
     }
 
@@ -27,15 +41,31 @@ final class AppShell: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    // Minimal menu bar so the standard chords (Cmd-Q, Cmd-H, Cmd-W) work
-    // even when the only visible window is borderless.
-    private func installMenuBar(app: NSApplication) {
+    @objc fileprivate func invokeSettings(_ sender: Any?) {
+        settingsAction?()
+    }
+
+    // Minimal menu bar so the standard chords (Cmd-Q, Cmd-H, Cmd-W, Cmd-,)
+    // work even when the only visible window is borderless.
+    private func installMenuBar(app: NSApplication, appName: String, hasSettings: Bool) {
         let mainMenu = NSMenu()
 
-        let appItem = NSMenuItem()
-        let appMenu = NSMenu()
-        let appName = ProcessInfo.processInfo.processName
+        // Both the menu item's title and the submenu's title need to be
+        // set for the menu-bar label to read what we want — AppKit's
+        // application-menu-name resolution looks at the title of the
+        // first top-level item; CFBundleName otherwise wins at startup.
+        let appItem = NSMenuItem(title: appName, action: nil, keyEquivalent: "")
+        let appMenu = NSMenu(title: appName)
         appMenu.addItem(NSMenuItem(title: "About \(appName)", action: nil, keyEquivalent: ""))
+        if hasSettings {
+            appMenu.addItem(.separator())
+            let settings = NSMenuItem(
+                title: "Settings…",
+                action: #selector(invokeSettings(_:)),
+                keyEquivalent: ",")
+            settings.target = self
+            appMenu.addItem(settings)
+        }
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(
             title: "Hide \(appName)",

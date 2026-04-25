@@ -62,12 +62,14 @@ enum GUIEntry {
                 splashFile: splashURL,
                 transparentHint: cfg.splash?.transparent ?? false
             )
-            controller?.onDoubleClick = { [weak controller] in
+            // Both the splash double-click and the menu's Settings…
+            // entry route through the same MoreDialog reconfig path.
+            let openConfigure: () -> Void = { [weak controller] in
                 MoreDialogController.present(prefill: cfg, dropped: .none) { outcome in
                     guard case .saved(let plan) = outcome else { return }
-                    // Splash-double-click reconfig only rewrites cider.json
-                    // — the data is already materialised in place. Mode /
-                    // source from the InstallPlan are ignored here.
+                    // Reconfig only rewrites cider.json — the data is
+                    // already materialised in place. Mode / source from
+                    // the InstallPlan are ignored here.
                     let updated = plan.config
                     do {
                         switch resolved.source {
@@ -85,7 +87,8 @@ enum GUIEntry {
                     }
                 }
             }
-            shell.run { _ in
+            controller?.onDoubleClick = openConfigure
+            shell.run(appName: cfg.displayName, onSettings: openConfigure) { _ in
                 controller?.attach()
                 runLaunchPipeline(
                     config: cfg,
@@ -96,9 +99,16 @@ enum GUIEntry {
                 )
             }
         } else {
-            // Unconfigured bundle → drop zone window.
+            // Unconfigured bundle → drop zone window. Settings… opens
+            // MoreDialog with the drop zone's current state (loaded
+            // config + dropped source if any).
             let controller = DropZoneController(bundleEnv: env)
-            shell.run { _ in controller.attach() }
+            shell.run(
+                appName: env.bundleName,
+                onSettings: { [weak controller] in controller?.openSettings() }
+            ) { _ in
+                controller.attach()
+            }
         }
     }
 
