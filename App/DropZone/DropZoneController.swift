@@ -250,6 +250,13 @@ final class DropZoneController {
         preflight: PreflightRunner? = PreflightRunner(),
         progress: @escaping InstallProgressCallback
     ) async throws -> URL {
+        // Declare the phase list up front so the sheet can render it
+        // immediately as a checklist with the appropriate items grayed
+        // out (e.g. cached engine = .done before we even start).
+        let descriptors = phaseDescriptors(plan: plan, target: target,
+                                           preflight: preflight, hasIcon: icnsURL != nil)
+        progress(.phasesDeclared(descriptors))
+
         // 1. Resolve target bundle URL + clone if needed.
         let bundle: URL
         var partialClone: URL? = nil
@@ -258,8 +265,6 @@ final class DropZoneController {
             bundle = currentBundle
         case .cloneTo(let dest):
             bundle = dest
-            // Refuse to clobber existing paths — Phase 10's --force will
-            // change this; for now surface the conflict immediately.
             if FileManager.default.fileExists(atPath: dest.path) {
                 throw OrchestratorError.targetExists(dest)
             }
@@ -267,25 +272,22 @@ final class DropZoneController {
                 at: dest.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            progress(.stage("Cloning bundle", detail: dest.lastPathComponent))
+            progress(.phaseStarted(id: PhaseID.clone.rawValue))
             // cp -a preserves codesign xattrs.
             try await Shell.runAsync("/bin/cp", ["-a", currentBundle.path, dest.path],
                                      captureOutput: true)
+            progress(.phaseDone(id: PhaseID.clone.rawValue))
             partialClone = dest
         }
 
         do {
             // 2. Wipe stale in-bundle config unless Bundle mode is going
-            //    to write a fresh one there.
+            //    to write a fresh one there. (Not a user-visible phase.)
             try wipeStaleInBundleConfig(at: bundle, keepingForBundleMode: plan.mode == .bundle)
 
-            // 3. Phase-10 rename-on-Save: if the user changed the
-            //    Application Name AND we're editing an existing
-            //    install (no fresh source), move the AppSupport assets
-            //    to the new name *before* writing the new config.
-            //    For with-source applies the Installer writes fresh
-            //    data anyway, so we just clean up the old name in
-            //    step 6.
+            // 3. Phase-10 rename-on-Save: move the AppSupport assets
+            //    when the Application Name changed and there's no fresh
+            //    source to install from scratch.
             let oldName = previousAppSupportName(currentBundle: currentBundle, target: target)
             let newName = BundleTransmogrifier.sanitiseBundleName(plan.config.displayName)
             var effectiveConfig = plan.config
@@ -297,36 +299,36 @@ final class DropZoneController {
                 )
             }
 
-            // 4. Install (writes data + cider.json) when a fresh source
-            //    is provided. Otherwise just rewrite cider.json in place.
+            // 4. Install — phase id depends on the kind of work.
             if let source = plan.source {
+                let installPhaseId = installPhaseID(for: source).rawValue
+                progress(.phaseStarted(id: installPhaseId))
                 _ = try await Installer().run(
                     source: source,
                     mode: plan.mode,
                     baseConfig: effectiveConfig,
                     bundleURL: bundle,
-                    progress: progress
+                    // Forward .stage / .fraction events as detail /
+                    // progress on the active install phase so we don't
+                    // leak them as separate header noise.
+                    progress: { event in
+                        forwardSubProgress(event, into: installPhaseId, to: progress)
+                    }
                 )
+                progress(.phaseDone(id: installPhaseId))
             } else {
-                progress(.stage("Writing configuration", detail: ""))
+                progress(.phaseStarted(id: PhaseID.writeConfig.rawValue))
                 let target = configURL(forName: newName, mode: plan.mode, bundle: bundle)
                 try effectiveConfig.write(to: target)
+                progress(.phaseDone(id: PhaseID.writeConfig.rawValue))
             }
 
-            // 5. With-source orphan cleanup: a fresh install under a new
-            //    name leaves the old AppSupport entries behind. Remove
-            //    them now that the new ones are in place.
+            // 5. With-source orphan cleanup (silent).
             if plan.source != nil, let oldName, !oldName.isEmpty, oldName != newName {
                 cleanupOrphanedAppSupport(name: oldName, mode: plan.mode)
             }
 
-            // 6. Preflight — engine + template + wineboot + graphics.
-            //    Reads cider.json from where the Installer wrote it
-            //    (or where the no-source branch wrote the rewrite),
-            //    then runs the long-lead-time setup so the resulting
-            //    bundle is double-clickable straight away. Tests pass
-            //    nil to skip this step (it's covered separately by
-            //    PreflightRunnerTests).
+            // 6. Preflight — engine / template / prefix / graphics.
             if let preflight {
                 let writtenConfigURL = configURL(forName: newName,
                                                  mode: plan.mode,
@@ -343,15 +345,17 @@ final class DropZoneController {
 
             // 7. Apply Finder custom icon (sibling of Contents/, signature-safe).
             if let icnsURL {
-                progress(.stage("Applying icon", detail: ""))
+                progress(.phaseStarted(id: PhaseID.icon.rawValue))
                 _ = IconConverter.applyAsCustomIcon(at: icnsURL, to: bundle)
+                progress(.phaseDone(id: PhaseID.icon.rawValue))
             }
 
             // 8. Rename in-place bundles to <Application Name>.app.
-            //    Clone-to bundles use the user-picked filename as-is.
             let final: URL
             if case .applyInPlace = target {
+                progress(.phaseStarted(id: PhaseID.rename.rawValue))
                 final = try renameToDisplayName(bundle, displayName: plan.config.displayName)
+                progress(.phaseDone(id: PhaseID.rename.rawValue))
             } else {
                 final = bundle
             }
@@ -370,20 +374,124 @@ final class DropZoneController {
         }
     }
 
-    // Bridges PreflightRunner's typed events to the legacy
-    // .stage / .fraction events the progress sheet renders today.
-    // Step 5 will swap this for the proper phase-list events.
+    // Stable IDs for the orchestrator's own phases. PreflightRunner has
+    // its own PhaseID enum (one per Preflight step); orchestrator phases
+    // wrap the work that happens before/around Preflight.
+    enum PhaseID: String {
+        case clone        = "orch.clone"
+        case copyFolder   = "orch.copyFolder"
+        case extractZip   = "orch.extractZip"
+        case downloadURL  = "orch.downloadURL"
+        case writeConfig  = "orch.writeConfig"
+        case icon         = "orch.icon"
+        case rename       = "orch.rename"
+    }
+
+    // Pick the install-step PhaseID label that matches the source kind.
+    nonisolated static func installPhaseID(for source: SourceAcquisition) -> PhaseID {
+        switch source {
+        case .folder: return .copyFolder
+        case .zip:    return .extractZip
+        case .url:    return .downloadURL
+        }
+    }
+
+    // Build the upfront phase descriptor list from the install plan.
+    // Order matches the order steps execute. PreflightRunner's phases
+    // are appended via `plan(for:configFile:)` — but the orchestrator
+    // doesn't have the written cider.json yet, so it builds them
+    // statically here (engine + template + prefix + graphics, all
+    // declared as not-yet-done; PreflightRunner's runtime probe will
+    // skip the work without a "done" event for already-cached items —
+    // the sheet shows them as running-then-done, which is honest).
+    nonisolated static func phaseDescriptors(
+        plan: InstallPlan,
+        target: ApplyTarget,
+        preflight: PreflightRunner?,
+        hasIcon: Bool
+    ) -> [PhaseDescriptor] {
+        var phases: [PhaseDescriptor] = []
+        if case .cloneTo = target {
+            phases.append(.init(id: PhaseID.clone.rawValue,
+                                label: "Cloning bundle",
+                                kind: .indeterminate))
+        }
+        if let source = plan.source {
+            switch source {
+            case .folder:
+                phases.append(.init(id: PhaseID.copyFolder.rawValue,
+                                    label: "Copying source",
+                                    kind: .indeterminate))
+            case .zip:
+                phases.append(.init(id: PhaseID.extractZip.rawValue,
+                                    label: "Extracting source",
+                                    kind: .indeterminate))
+            case .url:
+                phases.append(.init(id: PhaseID.downloadURL.rawValue,
+                                    label: "Downloading source",
+                                    kind: .determinate))
+            }
+        } else {
+            phases.append(.init(id: PhaseID.writeConfig.rawValue,
+                                label: "Writing configuration",
+                                kind: .indeterminate))
+        }
+        if preflight != nil {
+            for id in PreflightRunner.PhaseID.allCases {
+                phases.append(.init(id: id.rawValue, label: id.label,
+                                    kind: id.kind == .determinate
+                                        ? .determinate : .indeterminate))
+            }
+        }
+        if hasIcon {
+            phases.append(.init(id: PhaseID.icon.rawValue,
+                                label: "Applying icon",
+                                kind: .indeterminate))
+        }
+        if case .applyInPlace = target {
+            phases.append(.init(id: PhaseID.rename.rawValue,
+                                label: "Renaming bundle",
+                                kind: .indeterminate))
+        }
+        return phases
+    }
+
+    // Bridges PreflightRunner's typed events into phase events on the
+    // sheet's checklist.
     nonisolated static func forwardPreflightEvent(
         _ event: PreflightRunner.Event,
         to progress: @escaping InstallProgressCallback
     ) {
         switch event {
         case .started(let id):
-            progress(.stage(id.label, detail: ""))
-        case .progress(_, let f):
-            progress(.fraction(f))
-        case .done:
-            break
+            progress(.phaseStarted(id: id.rawValue))
+        case .progress(let id, let f):
+            progress(.phaseProgress(id: id.rawValue, fraction: f, detail: ""))
+        case .done(let id):
+            progress(.phaseDone(id: id.rawValue))
+        }
+    }
+
+    // Bridges sub-events emitted from within a single orchestrator
+    // phase (e.g. Installer's own .stage / .fraction) onto the active
+    // phase row so they show up as the phase's detail / bar instead
+    // of leaking into the sheet's header status.
+    nonisolated static func forwardSubProgress(
+        _ event: InstallProgress,
+        into activePhaseID: String,
+        to progress: @escaping InstallProgressCallback
+    ) {
+        switch event {
+        case .stage(_, let detail):
+            progress(.phaseProgress(id: activePhaseID, fraction: 0, detail: detail))
+        case .fraction(let f):
+            progress(.phaseProgress(id: activePhaseID, fraction: f, detail: ""))
+        // Pass phase-list events straight through (PreflightRunner
+        // wouldn't emit these here, but Installer's URL resolver might
+        // want to in the future).
+        case .phasesDeclared, .phaseStarted, .phaseProgress,
+             .phaseDone, .phaseFailed:
+            progress(event)
         }
     }
 

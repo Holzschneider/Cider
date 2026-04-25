@@ -34,11 +34,45 @@ public struct InstallResult {
     }
 }
 
-// Coarse-grained progress signal — Phase 7 hooks this into the modal
-// progress sheet (download / extract / copy each appearing as a stage).
+// Progress events flowing from the orchestrator / Installer / Preflight
+// chain into the modal progress sheet.
+//
+// `.stage` and `.fraction` are the legacy ad-hoc events — they update
+// the sheet's status line and bar without belonging to any specific
+// phase, so existing emitters continue to work.
+//
+// The phase-list events drive a checklist UI: callers declare the
+// phases up front via `.phasesDeclared`, then bracket each unit of
+// work with `.phaseStarted` / `.phaseProgress` / `.phaseDone` (or
+// `.phaseFailed` on error). Phases the caller already knows are done
+// — engine cached, template extracted — can be marked
+// `alreadyDone: true` in the descriptor so the sheet renders them
+// ticked-off without animating.
 public enum InstallProgress {
     case stage(String, detail: String)
     case fraction(Double)
+
+    case phasesDeclared([PhaseDescriptor])
+    case phaseStarted(id: String)
+    case phaseProgress(id: String, fraction: Double, detail: String)
+    case phaseDone(id: String)
+    case phaseFailed(id: String, message: String)
+}
+
+public struct PhaseDescriptor: Equatable, Sendable {
+    public let id: String
+    public let label: String
+    public let kind: Kind
+    public let alreadyDone: Bool
+
+    public enum Kind: Sendable { case determinate, indeterminate }
+
+    public init(id: String, label: String, kind: Kind, alreadyDone: Bool = false) {
+        self.id = id
+        self.label = label
+        self.kind = kind
+        self.alreadyDone = alreadyDone
+    }
 }
 
 public typealias InstallProgressCallback = @Sendable (InstallProgress) -> Void
