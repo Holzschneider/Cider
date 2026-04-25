@@ -361,6 +361,16 @@ final class DropZoneController {
             //    source to install from scratch.
             let oldName = previousAppSupportName(currentBundle: currentBundle, target: target)
             let newName = BundleTransmogrifier.sanitiseBundleName(plan.config.displayName)
+
+            // Final-guard name-clash check — MoreDialog already blocks
+            // the obvious cases via the inline marker, but a CLI /
+            // stale-form path could still hit it. Refuse before the
+            // Installer overwrites someone else's data.
+            if let clash = NameClashChecker.clash(
+                for: newName, mode: plan.mode, originalName: oldName
+            ) {
+                throw OrchestratorError.nameClash(clash)
+            }
             var effectiveConfig = plan.config
             if plan.source == nil, let oldName, !oldName.isEmpty, oldName != newName {
                 progress(.stage("Renaming application", detail: "\(oldName) → \(newName)"))
@@ -708,12 +718,15 @@ final class DropZoneController {
     enum OrchestratorError: Swift.Error, CustomStringConvertible {
         case emptyDisplayName
         case targetExists(URL)
+        case nameClash(String)
         var description: String {
             switch self {
             case .emptyDisplayName:
-                return "Application Name is empty — fill it in via More… first."
+                return "Application Name is empty — fill it in via Configure first."
             case .targetExists(let url):
                 return "A bundle already exists at \(url.path). Pick a different name or remove the existing one."
+            case .nameClash(let message):
+                return message
             }
         }
     }

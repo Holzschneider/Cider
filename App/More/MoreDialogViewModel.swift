@@ -38,6 +38,13 @@ final class MoreDialogViewModel: ObservableObject {
     @Published var applicationPath: String = ""
     @Published var originURL: String = ""
 
+    // Original Application Name when the form was loaded from an
+    // existing config. Lets the validator distinguish "user is
+    // editing their own config" (no clash) from "user just typed a
+    // name that's already in use by some other bundle". nil means
+    // "creating fresh".
+    private(set) var originalDisplayName: String? = nil
+
     // Engine
     @Published var engineName: String = ""
     @Published var engineURL: String = ""
@@ -115,6 +122,7 @@ final class MoreDialogViewModel: ObservableObject {
 
     func load(from config: CiderConfig) {
         displayName = config.displayName
+        originalDisplayName = config.displayName
         applicationPath = config.applicationPath
         // Heuristic: deduce install mode from the persisted applicationPath.
         // This is best-effort — the user can override via the picker.
@@ -299,9 +307,12 @@ final class MoreDialogViewModel: ObservableObject {
     @Published var generalError: String? = nil
 
     var displayNameError: String? {
-        displayName.trimmingCharacters(in: .whitespaces).isEmpty
-            ? "Application Name is required."
-            : nil
+        let trimmed = displayName.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return "Application Name is required." }
+        if let clash = NameClashChecker.clash(
+            for: trimmed, mode: installMode, originalName: originalDisplayName
+        ) { return clash }
+        return nil
     }
 
     var exeError: String? {
