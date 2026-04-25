@@ -242,6 +242,12 @@ final class DropZoneController {
         target: ApplyTarget,
         currentBundle: URL,
         icnsURL: URL?,
+        // nil → skip the engine/template/wineboot/graphics setup. Tests
+        // that exercise the install + clone + rename plumbing pass nil
+        // to avoid touching the user's real AppSupport. Production
+        // wires PreflightRunner() so Created bundles are ready to
+        // launch without a second long wait.
+        preflight: PreflightRunner? = PreflightRunner(),
         progress: @escaping InstallProgressCallback
     ) async throws -> URL {
         // 1. Resolve target bundle URL + clone if needed.
@@ -314,13 +320,34 @@ final class DropZoneController {
                 cleanupOrphanedAppSupport(name: oldName, mode: plan.mode)
             }
 
-            // 6. Apply Finder custom icon (sibling of Contents/, signature-safe).
+            // 6. Preflight — engine + template + wineboot + graphics.
+            //    Reads cider.json from where the Installer wrote it
+            //    (or where the no-source branch wrote the rewrite),
+            //    then runs the long-lead-time setup so the resulting
+            //    bundle is double-clickable straight away. Tests pass
+            //    nil to skip this step (it's covered separately by
+            //    PreflightRunnerTests).
+            if let preflight {
+                let writtenConfigURL = configURL(forName: newName,
+                                                 mode: plan.mode,
+                                                 bundle: bundle)
+                let writtenConfig = try CiderConfig.read(from: writtenConfigURL)
+                try await preflight.run(
+                    for: writtenConfig,
+                    configFile: writtenConfigURL,
+                    progress: { event in
+                        forwardPreflightEvent(event, to: progress)
+                    }
+                )
+            }
+
+            // 7. Apply Finder custom icon (sibling of Contents/, signature-safe).
             if let icnsURL {
                 progress(.stage("Applying icon", detail: ""))
                 _ = IconConverter.applyAsCustomIcon(at: icnsURL, to: bundle)
             }
 
-            // 7. Rename in-place bundles to <Application Name>.app.
+            // 8. Rename in-place bundles to <Application Name>.app.
             //    Clone-to bundles use the user-picked filename as-is.
             let final: URL
             if case .applyInPlace = target {
@@ -340,6 +367,23 @@ final class DropZoneController {
                 try? FileManager.default.removeItem(at: partial)
             }
             throw error
+        }
+    }
+
+    // Bridges PreflightRunner's typed events to the legacy
+    // .stage / .fraction events the progress sheet renders today.
+    // Step 5 will swap this for the proper phase-list events.
+    nonisolated static func forwardPreflightEvent(
+        _ event: PreflightRunner.Event,
+        to progress: @escaping InstallProgressCallback
+    ) {
+        switch event {
+        case .started(let id):
+            progress(.stage(id.label, detail: ""))
+        case .progress(_, let f):
+            progress(.fraction(f))
+        case .done:
+            break
         }
     }
 

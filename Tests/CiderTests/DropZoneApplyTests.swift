@@ -87,7 +87,7 @@ final class DropZoneApplyTests: XCTestCase {
             plan: plan,
             target: .applyInPlace,
             currentBundle: fakeBundle,
-            icnsURL: nil,
+            icnsURL: nil, preflight: nil,
             progress: { _ in }
         )
 
@@ -122,7 +122,7 @@ final class DropZoneApplyTests: XCTestCase {
             plan: plan,
             target: .applyInPlace,
             currentBundle: fakeBundle,
-            icnsURL: nil,
+            icnsURL: nil, preflight: nil,
             progress: { _ in }
         )
 
@@ -159,7 +159,7 @@ final class DropZoneApplyTests: XCTestCase {
             plan: plan,
             target: .cloneTo(dest),
             currentBundle: fakeBundle,
-            icnsURL: nil,
+            icnsURL: nil, preflight: nil,
             progress: { _ in }
         )
 
@@ -186,7 +186,7 @@ final class DropZoneApplyTests: XCTestCase {
                 plan: plan,
                 target: .cloneTo(dest),
                 currentBundle: fakeBundle,
-                icnsURL: nil,
+                icnsURL: nil, preflight: nil,
                 progress: { _ in }
             )
             XCTFail("expected targetExists")
@@ -209,7 +209,7 @@ final class DropZoneApplyTests: XCTestCase {
             plan: plan,
             target: .applyInPlace,
             currentBundle: fakeBundle,
-            icnsURL: nil,
+            icnsURL: nil, preflight: nil,
             progress: { _ in }
         )
         // Bundle was renamed.
@@ -232,7 +232,7 @@ final class DropZoneApplyTests: XCTestCase {
         let plan = InstallPlan(config: sampleConfig(), mode: .install, source: .folder(folder))
         let final = try await DropZoneController.performApply(
             plan: plan, target: .applyInPlace,
-            currentBundle: fakeBundle, icnsURL: nil, progress: { _ in }
+            currentBundle: fakeBundle, icnsURL: nil, preflight: nil, progress: { _ in }
         )
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: final.appendingPathComponent("cider.json").path),
@@ -276,7 +276,7 @@ final class DropZoneApplyTests: XCTestCase {
             plan: plan,
             target: .applyInPlace,
             currentBundle: renamedBundle,
-            icnsURL: nil,
+            icnsURL: nil, preflight: nil,
             progress: { _ in }
         )
 
@@ -328,7 +328,7 @@ final class DropZoneApplyTests: XCTestCase {
             plan: plan,
             target: .applyInPlace,
             currentBundle: renamedBundle,
-            icnsURL: nil,
+            icnsURL: nil, preflight: nil,
             progress: { _ in }
         )
 
@@ -369,7 +369,7 @@ final class DropZoneApplyTests: XCTestCase {
             plan: plan,
             target: .applyInPlace,
             currentBundle: renamedBundle,
-            icnsURL: nil,
+            icnsURL: nil, preflight: nil,
             progress: { _ in }
         )
 
@@ -397,7 +397,7 @@ final class DropZoneApplyTests: XCTestCase {
 
         _ = try await DropZoneController.performApply(
             plan: plan, target: .applyInPlace,
-            currentBundle: fakeBundle, icnsURL: nil, progress: { _ in }
+            currentBundle: fakeBundle, icnsURL: nil, preflight: nil, progress: { _ in }
         )
     }
 
@@ -415,7 +415,7 @@ final class DropZoneApplyTests: XCTestCase {
         )
         let final = try await DropZoneController.performApply(
             plan: plan, target: .applyInPlace,
-            currentBundle: fakeBundle, icnsURL: nil, progress: { _ in }
+            currentBundle: fakeBundle, icnsURL: nil, preflight: nil, progress: { _ in }
         )
         let cider = final.appendingPathComponent("cider.json")
         XCTAssertTrue(FileManager.default.fileExists(atPath: cider.path))
