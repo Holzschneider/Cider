@@ -64,8 +64,13 @@ public struct TemplateManager {
 
     // The template ships per-renderer DLLs at:
     //   Contents/Frameworks/renderer/<kind>/wine/<arch>/
-    // Returns nil if the directory does not exist (e.g. D3DMetal is x86_64
-    // only — there is no i386-windows folder for it).
+    // Returns nil when the path doesn't exist OR exists as something
+    // other than a directory. The "other than a directory" guard
+    // matters for D3DMetal: its template entry for i386-windows may be
+    // a placeholder file or a broken symlink (D3DMetal ships x86_64
+    // only). Treating that as "no DLLs available" lets installArch's
+    // skip-and-warn path kick in instead of crashing on
+    // contentsOfDirectory.
     public func rendererDirectory(
         of templateApp: URL,
         kind: GraphicsDriverKind,
@@ -78,7 +83,9 @@ public struct TemplateManager {
             .appendingPathComponent(kind.rawValue, isDirectory: true)
             .appendingPathComponent("wine", isDirectory: true)
             .appendingPathComponent(arch.rawValue, isDirectory: true)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+        return (exists && isDir.boolValue) ? url : nil
     }
 
     private func template(in dir: URL, version: String) -> URL {

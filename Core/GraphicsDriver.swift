@@ -66,10 +66,19 @@ public struct GraphicsDriver {
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
 
         let fm = FileManager.default
-        let entries = try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
+        // Use the path-based variant: the URL-based contentsOfDirectory(at:)
+        // refuses to enumerate when the URL was constructed with
+        // isDirectory: true AND the underlying path is a symlink to a
+        // directory (Foundation tacks on a trailing slash and the open()
+        // syscall returns ENOTDIR mid-resolution). Sikarugir's template
+        // ships several such symlinks under renderer/<kind>/wine/ —
+        // d3dmetal/wine/i386-windows points at cnc-ddraw/wine/i386-windows,
+        // for example. The path-based call sidesteps the bug.
+        let names = try fm.contentsOfDirectory(atPath: source.path)
         var copied = 0
-        for entry in entries where entry.pathExtension.lowercased() == "dll" {
-            let dst = destination.appendingPathComponent(entry.lastPathComponent)
+        for name in names where (name as NSString).pathExtension.lowercased() == "dll" {
+            let entry = source.appendingPathComponent(name)
+            let dst = destination.appendingPathComponent(name)
             if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
             try fm.copyItem(at: entry, to: dst)
             copied += 1
