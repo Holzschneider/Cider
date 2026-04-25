@@ -48,13 +48,19 @@ public final class LaunchPipeline {
 
         // 1. Resolve application directory from cider.json's applicationPath
         //    (relative to the cider.json's own location, or absolute for
-        //    Link mode). Validate it exists — Phase 9 surfaces this as an
-        //    in-form error; for now we throw.
+        //    Link mode). Validate it exists AND that the configured exe
+        //    sits where it claims to. The CLI / launcher catches these
+        //    typed errors and routes the user through the in-Configure
+        //    recovery flow with the offending field flagged red.
         let applicationDir = config.resolvedApplicationDirectory(configFile: configFileURL)
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: applicationDir.path, isDirectory: &isDir),
               isDir.boolValue else {
             throw PipelineError.applicationDirectoryMissing(applicationDir)
+        }
+        let exeURL = config.resolvedExecutable(configFile: configFileURL)
+        if !FileManager.default.fileExists(atPath: exeURL.path) {
+            throw PipelineError.executableMissing(exeURL)
         }
         progress("Resolved source", applicationDir.lastPathComponent, nil)
 
@@ -242,10 +248,13 @@ public final class LaunchPipeline {
 
 public enum PipelineError: Swift.Error, CustomStringConvertible {
     case applicationDirectoryMissing(URL)
+    case executableMissing(URL)
     public var description: String {
         switch self {
         case .applicationDirectoryMissing(let url):
             return "Application directory missing: \(url.path)"
+        case .executableMissing(let url):
+            return "Executable not found: \(url.path)"
         }
     }
 }

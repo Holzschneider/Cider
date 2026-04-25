@@ -306,6 +306,16 @@ final class MoreDialogViewModel: ObservableObject {
     // the dialog; cleared on the next successful Save.
     @Published var generalError: String? = nil
 
+    // Externally-injected per-field errors. The launcher sets these
+    // when it pops the Configure dialog after a missing-source /
+    // missing-exe failure — the path the user typed is "valid" by
+    // the form's own rules (non-empty, scheme, etc.) but the
+    // filesystem disagrees. The composed accessors below prefer the
+    // external value over the form's own computed message so the
+    // marker reflects the live failure cause.
+    @Published var externalSourceError: String? = nil
+    @Published var externalExeError: String? = nil
+
     var displayNameError: String? {
         let trimmed = displayName.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { return "Application Name is required." }
@@ -316,7 +326,8 @@ final class MoreDialogViewModel: ObservableObject {
     }
 
     var exeError: String? {
-        exe.trimmingCharacters(in: .whitespaces).isEmpty
+        if let externalExeError, !externalExeError.isEmpty { return externalExeError }
+        return exe.trimmingCharacters(in: .whitespaces).isEmpty
             ? "Executable path is required."
             : nil
     }
@@ -337,6 +348,9 @@ final class MoreDialogViewModel: ObservableObject {
     }
 
     var sourceError: String? {
+        if let externalSourceError, !externalSourceError.isEmpty {
+            return externalSourceError
+        }
         let trimmed = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
         switch installMode {
         case .link:

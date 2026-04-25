@@ -200,14 +200,105 @@ enum GUIEntry {
                 if exitCode != 0 { exit(exitCode) }
             } catch {
                 await MainActor.run {
-                    let alert = NSAlert()
-                    alert.messageText = "Launch failed"
-                    alert.informativeText = String(describing: error)
-                    alert.alertStyle = .warning
-                    alert.runModal()
-                    NSApplication.shared.terminate(nil)
+                    handleLaunchError(error,
+                                      config: config,
+                                      configFileURL: configFileURL,
+                                      splash: splash)
                 }
             }
+        }
+    }
+
+    // PipelineError variants that point at a recoverable user-fixable
+    // problem (missing source folder, missing exe) drop the user into
+    // the Configure dialog with the offending field flagged red. Any
+    // other error → generic alert + terminate, same as before.
+    @MainActor
+    private static func handleLaunchError(
+        _ error: Swift.Error,
+        config: CiderConfig,
+        configFileURL: URL,
+        splash: SplashController?
+    ) {
+        FileHandle.standardError.write(Data("✗ launch failed: \(error)\n".utf8))
+        guard let recovery = recoveryHint(for: error) else {
+            let alert = NSAlert()
+            alert.messageText = "Launch failed"
+            alert.informativeText = String(describing: error)
+            alert.alertStyle = .warning
+            alert.runModal()
+            NSApplication.shared.terminate(nil)
+            return
+        }
+
+        // Hide the splash before the dialog comes up — it's a borderless
+        // window that would otherwise sit on top of any modal alert.
+        splash?.requestClose()
+
+        let alert = NSAlert()
+        alert.messageText = recovery.alertTitle
+        alert.informativeText = recovery.alertBody
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Configure…")
+        alert.addButton(withTitle: "Quit")
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else {
+            NSApplication.shared.terminate(nil)
+            return
+        }
+
+        MoreDialogController.present(
+            prefill: config,
+            dropped: .none,
+            initialError: recovery.banner,
+            initialSourceError: recovery.sourceFieldError,
+            initialExeError: recovery.exeFieldError
+        ) { outcome in
+            // Save → write the updated cider.json next to where it was
+            // loaded from, then terminate. The user re-launches the
+            // bundle to pick up the new config.
+            switch outcome {
+            case .saved(let plan):
+                do {
+                    try plan.config.write(to: configFileURL)
+                } catch {
+                    Log.warn("could not save updated config: \(error)")
+                }
+                NSApplication.shared.terminate(nil)
+            case .cancelled:
+                NSApplication.shared.terminate(nil)
+            }
+        }
+    }
+
+    private struct LaunchRecovery {
+        let alertTitle: String
+        let alertBody: String
+        let banner: String
+        let sourceFieldError: String?
+        let exeFieldError: String?
+    }
+
+    @MainActor
+    private static func recoveryHint(for error: Swift.Error) -> LaunchRecovery? {
+        guard let pipelineError = error as? PipelineError else { return nil }
+        switch pipelineError {
+        case .applicationDirectoryMissing(let url):
+            return LaunchRecovery(
+                alertTitle: "Source folder missing",
+                alertBody: "Cider couldn't find the source folder this app points at:\n\(url.path)\n\nThe folder may have moved, been renamed, or been deleted. Open Configure to point at a new location.",
+                banner: "Source folder is missing on disk: \(url.path)",
+                sourceFieldError: "Source folder doesn't exist at the recorded path.",
+                exeFieldError: nil
+            )
+        case .executableMissing(let url):
+            return LaunchRecovery(
+                alertTitle: "Executable missing",
+                alertBody: "Cider couldn't find the configured executable:\n\(url.path)\n\nThe file may have moved or been renamed inside the source folder. Open Configure to fix the Executable path.",
+                banner: "Executable is missing on disk: \(url.path)",
+                sourceFieldError: nil,
+                exeFieldError: "Executable doesn't exist at the recorded path."
+            )
         }
     }
 }
