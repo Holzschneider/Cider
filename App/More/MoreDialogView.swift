@@ -402,13 +402,16 @@ struct MoreDialogView: View {
         error: String? = nil,
         @ViewBuilder field: () -> Field
     ) -> some View {
-        HStack(alignment: .center, spacing: 16) {
+        // Baseline-align so the label sits on the same line as the
+        // field/button instead of vertically centering between the
+        // field and the help text below it.
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
             DialogRowLabel(text: label, error: error)
             VStack(alignment: .leading, spacing: 6) {
                 field()
-                // The error message lives in the marker's transient
-                // bubble (see ErrorMarker) — only the help text shows
-                // under the field, when there's no error competing for
+                // The error message lives in the marker's tooltip
+                // (see ErrorMarker) — only the help text shows under
+                // the field, when there's no error competing for
                 // attention.
                 if error == nil, let help {
                     DialogHelpText(text: help)
