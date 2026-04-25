@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import CiderModels
 import CiderCore
 
@@ -311,7 +312,7 @@ struct MoreDialogView: View {
             }
             row("App icon") {
                 pathPicker(text: $vm.iconFile,
-                           placeholder: "icon.png or icon.icns",
+                           placeholder: "icon.png, icon.ico, or icon.icns",
                            filter: .image)
             }
         }
@@ -586,7 +587,14 @@ struct MoreDialogView: View {
         panel.allowsMultipleSelection = false
         switch filter {
         case .image:
-            panel.allowedContentTypes = [.png, .jpeg, .icns]
+            // Accept .ico in addition to the macOS-native formats so
+            // distributors can drop in the icon shipped with the
+            // Windows app directly.
+            var types: [UTType] = [.png, .jpeg, .icns]
+            if let ico = UTType("com.microsoft.ico") {
+                types.append(ico)
+            }
+            panel.allowedContentTypes = types
             panel.canChooseDirectories = false
             panel.canChooseFiles = true
         case .anyContent:

@@ -138,7 +138,7 @@ enum GUIEntry {
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("cider-icon-\(UUID().uuidString).icns")
             do {
-                try IconConverter.convert(png: iconURL, destination: tmp)
+                try IconConverter.convert(image: iconURL, destination: tmp)
                 icnsURL = tmp
             } catch {
                 Log.warn("could not convert icon to .icns: \(error)")
@@ -242,7 +242,7 @@ private func transmogrify(
         } else {
             let tmpIcns = FileManager.default.temporaryDirectory
                 .appendingPathComponent("cider-icon-\(UUID().uuidString).icns")
-            try IconConverter.convert(png: iconURL, destination: tmpIcns)
+            try IconConverter.convert(image: iconURL, destination: tmpIcns)
             icnsURL = tmpIcns
         }
     }

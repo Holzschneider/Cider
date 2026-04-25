@@ -32,7 +32,7 @@ enum DialogTheme {
     static let sectionGap: CGFloat       = 26
     static let bodyHorizontal: CGFloat   = 28
     static let bodyTop: CGFloat          = 20
-    static let bodyBottom: CGFloat       = 4
+    static let bodyBottom: CGFloat       = 28
 }
 
 // Right-aligned dim section row label, optionally preceded by a small

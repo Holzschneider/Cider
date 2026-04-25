@@ -205,9 +205,9 @@ final class DropZoneController {
         alert.runModal()
     }
 
-    // If the configured icon path is a PNG (or non-icns), convert it to
-    // .icns once via IconConverter into a temp file. nil if there's no
-    // icon configured.
+    // If the configured icon path isn't already .icns, convert it to one
+    // via IconConverter. Accepts PNG, JPEG, and Windows .ico (and
+    // anything else NSImage can read). nil if there's no icon configured.
     private func resolveIcon(for config: CiderConfig) throws -> URL? {
         guard let iconPath = config.icon, !iconPath.isEmpty else { return nil }
         let url = URL(fileURLWithPath: iconPath)
@@ -216,7 +216,7 @@ final class DropZoneController {
         }
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("cider-icon-\(UUID().uuidString).icns")
-        try IconConverter.convert(png: url, destination: tmp)
+        try IconConverter.convert(image: url, destination: tmp)
         return tmp
     }
 
