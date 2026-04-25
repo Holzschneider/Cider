@@ -24,6 +24,14 @@ import Foundation
 // cider.json-at-URL referenced a zip elsewhere (drop-URL indirection,
 // Phase 5), and preserved so the bundle knows where its data came from
 // (future patcher / re-install mechanism).
+//
+// `prefixPath` is the optional Wine-prefix root for this config:
+//   - Bundle mode writes "System" so the prefix lives inside the .app
+//     bundle (sibling of Contents/, holds drive_c/Program Files/<app>/
+//     directly — no symlinks).
+//   - Install / Link mode leave it nil; the launcher selects a shared
+//     AppSupport prefix keyed by a config-derived hash so multiple
+//     bundles with identical wine setups share one prefix.
 public struct CiderConfig: Codable, Equatable {
     public static let currentSchemaVersion = 2
 
@@ -40,6 +48,7 @@ public struct CiderConfig: Codable, Equatable {
     public var icon: String?
     public var originURL: String?
     public var distributionURL: String?
+    public var prefixPath: String?
 
     public init(
         schemaVersion: Int = CiderConfig.currentSchemaVersion,
@@ -54,7 +63,8 @@ public struct CiderConfig: Codable, Equatable {
         splash: Splash? = nil,
         icon: String? = nil,
         originURL: String? = nil,
-        distributionURL: String? = nil
+        distributionURL: String? = nil,
+        prefixPath: String? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.displayName = displayName
@@ -69,6 +79,7 @@ public struct CiderConfig: Codable, Equatable {
         self.icon = icon
         self.originURL = originURL
         self.distributionURL = distributionURL
+        self.prefixPath = prefixPath
     }
 
     public struct EngineRef: Codable, Equatable {
@@ -156,6 +167,19 @@ public extension CiderConfig {
     func resolvedExecutable(configFile: URL) -> URL {
         resolvedApplicationDirectory(configFile: configFile)
             .appendingPathComponent(exe)
+    }
+
+    // Resolves `prefixPath` against the cider.json's own location.
+    // Absolute paths are returned as-is. Returns nil when no in-bundle /
+    // explicit prefix is configured (the launcher then selects a shared
+    // AppSupport prefix via PrefixIdentity).
+    func resolvedPrefixDirectory(configFile: URL) -> URL? {
+        guard let prefixPath, !prefixPath.isEmpty else { return nil }
+        if prefixPath.hasPrefix("/") {
+            return URL(fileURLWithPath: prefixPath)
+        }
+        let configDir = configFile.deletingLastPathComponent()
+        return configDir.appendingPathComponent(prefixPath, isDirectory: true)
     }
 }
 

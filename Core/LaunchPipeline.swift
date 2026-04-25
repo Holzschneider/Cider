@@ -79,10 +79,17 @@ public final class LaunchPipeline {
         // 4. Locate wine binary.
         let wineBinary = try EngineManager().wineBinaryPath(in: engineRoot)
 
-        // 5. Prefix.
-        let prefix = AppSupport.prefix(forBundleNamed: bundleName)
+        // 5. Prefix — either an in-bundle "System" prefix (Bundle mode)
+        //    or a shared AppSupport prefix keyed by config-derived hash
+        //    (Install / Link). The prefix's own "is initialised?" marker
+        //    is the wineboot output (drive_c/windows). We don't trust
+        //    RuntimeStats here because shared prefixes can be initialised
+        //    by a different bundle and we'd never see the flag.
+        let prefix = Self.selectPrefix(config: config, configFile: configFileURL)
         let prefixInit = PrefixInitializer(prefix: prefix, wineBinary: wineBinary)
-        if !stats.prefixInitialised {
+        let alreadyInitialised = FileManager.default.fileExists(
+            atPath: prefix.appendingPathComponent("drive_c/windows").path)
+        if !alreadyInitialised {
             progress("Initialising Wine prefix", "first run only — ~30s", nil)
             try prefixInit.initialise(skip: false)
             stats.prefixInitialised = true
@@ -183,6 +190,19 @@ public final class LaunchPipeline {
             detail = String(format: "%.1f MB", mb)
         }
         progress(title, detail, fraction)
+    }
+
+    // The prefix this config should run in. cider.json's `prefixPath`
+    // (set by Bundle mode to "System") points at an in-bundle prefix;
+    // anything else uses an AppSupport prefix slot keyed by config-
+    // derived identity so identical wine setups can share a prefix
+    // across multiple bundles.
+    public static func selectPrefix(config: CiderConfig, configFile: URL) -> URL {
+        if let bundlePrefix = config.resolvedPrefixDirectory(configFile: configFile) {
+            return bundlePrefix
+        }
+        let identity = PrefixIdentity.compute(for: config)
+        return AppSupport.prefix(forIdentityKey: identity.key)
     }
 
     // Copy the template's Frameworks/ next to wswine.bundle/ inside the

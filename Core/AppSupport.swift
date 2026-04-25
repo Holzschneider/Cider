@@ -27,6 +27,14 @@ public enum AppSupport {
         prefixes.appendingPathComponent(name, isDirectory: true)
     }
 
+    // Shared-prefix slot, keyed by a config-derived identity (computed
+    // by PrefixIdentity). The same `key` reused across multiple
+    // bundles → all bundles share the prefix and hence its windows/
+    // state, graphics DLLs, registry, etc.
+    public static func prefix(forIdentityKey key: String) -> URL {
+        prefixes.appendingPathComponent(key, isDirectory: true)
+    }
+
     public static func config(forBundleNamed name: String) -> URL {
         configs.appendingPathComponent("\(name).json")
     }
