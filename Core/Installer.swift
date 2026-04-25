@@ -189,7 +189,11 @@ public struct Installer {
         guard !displayName.isEmpty else { throw Error.invalidDisplayName }
 
         let target = AppSupport.programFiles(forBundleNamed: displayName)
-        try await materialise(source: source, into: target, progress: progress)
+        // Install mode keeps the source folder name as the top-level
+        // entry under target/ — that's how the existing tests + form
+        // pre-fill the exe path ("MyGame/Game.exe").
+        try await materialise(source: source, into: target,
+                              preserveSourceFolderName: true, progress: progress)
 
         // cider.json sits in Configs/<name>.json with applicationPath = the
         // absolute path to the materialised data. The exe path stays
@@ -208,33 +212,45 @@ public struct Installer {
         )
     }
 
-    // MARK: - Bundle (folder copy + local zip extract → <bundle>/Application/)
+    // MARK: - Bundle (folder copy + local zip extract → <bundle>/System/…)
 
-    // Same materialisation rules as Install, but the data lands inside
-    // the .app bundle (sibling of Contents/) and the cider.json sits at
-    // <bundle>/cider.json with a relative applicationPath = "Application".
-    // Result: bundle stays self-contained, can be moved between disks /
-    // Macs without breaking the path.
+    // Schema-v3 unified layout: the .app bundle holds both the wine
+    // prefix and the application data under a single "System" folder.
+    // The user's source files land directly in
+    //   <bundle>/System/drive_c/Program Files/<programName>/...
+    // and the cider.json next to Contents/ records both:
+    //   prefixPath:      "System"
+    //   applicationPath: "System/drive_c/Program Files/<programName>"
+    // so the launcher can find the prefix AND the app data without
+    // touching anything outside the bundle.
     //
     // Touches only siblings of Contents/, so the existing codesign /
-    // notarization on Contents/ stays valid (per the same rule
-    // BundleTransmogrifier already relies on for the Finder custom icon
-    // and the in-bundle cider.json).
+    // notarization on Contents/ stays valid.
     private func installBundle(
         source: SourceAcquisition,
         baseConfig: CiderConfig,
         bundleURL: URL,
         progress: InstallProgressCallback?
     ) async throws -> InstallResult {
-        let displayName = sanitised(baseConfig.displayName)
-        guard !displayName.isEmpty else { throw Error.invalidDisplayName }
+        let programName = sanitised(baseConfig.displayName)
+        guard !programName.isEmpty else { throw Error.invalidDisplayName }
 
-        let applicationDir = bundleURL.appendingPathComponent("Application", isDirectory: true)
-        try await materialise(source: source, into: applicationDir, progress: progress)
+        let systemDir = bundleURL.appendingPathComponent("System", isDirectory: true)
+        let appDir = systemDir
+            .appendingPathComponent("drive_c", isDirectory: true)
+            .appendingPathComponent("Program Files", isDirectory: true)
+            .appendingPathComponent(programName, isDirectory: true)
+
+        // Drop CONTENTS of the source into Program Files/<programName>/
+        // — no source-folder nesting. The user's exe field is relative
+        // to that program directory.
+        try await materialise(source: source, into: appDir,
+                              preserveSourceFolderName: false, progress: progress)
 
         let configURL = bundleURL.appendingPathComponent("cider.json")
         var config = baseConfig
-        config.applicationPath = "Application"
+        config.prefixPath = "System"
+        config.applicationPath = "System/drive_c/Program Files/\(programName)"
         try config.write(to: configURL)
 
         progress?(.stage("Done", detail: ""))
@@ -250,6 +266,7 @@ public struct Installer {
     private func materialise(
         source: SourceAcquisition,
         into target: URL,
+        preserveSourceFolderName: Bool,
         progress: InstallProgressCallback?
     ) async throws {
         try Task.checkCancellation()
@@ -259,15 +276,26 @@ public struct Installer {
         case .folder(let src):
             try ensureExists(src, kind: .folder)
             progress?(.stage("Copying source", detail: src.lastPathComponent))
-            // cp -R preserves the source's name as the top-level entry
-            // under target/, so the user-spec rule holds:
-            //   /tmp/MyGame copied into target/  →  target/MyGame/
-            try await Shell.runAsync("/bin/cp", ["-R", src.path, target.path], captureOutput: true)
+            if preserveSourceFolderName {
+                // Install mode: cp -R preserves the source's name as
+                // the top-level entry under target/. The user-spec
+                // rule:  /tmp/MyGame copied into target/  →  target/MyGame/
+                try await Shell.runAsync("/bin/cp", ["-R", src.path, target.path],
+                                         captureOutput: true)
+            } else {
+                // Bundle mode: drop CONTENTS of the source folder into
+                // target/ directly — no extra nesting. ditto's two-arg
+                // form does exactly this and ships with macOS.
+                try await Shell.runAsync("/usr/bin/ditto", [src.path, target.path],
+                                         captureOutput: true)
+            }
         case .zip(let zip):
             try ensureExists(zip, kind: .zip)
             progress?(.stage("Extracting archive", detail: zip.lastPathComponent))
             // Whatever the zip contains (flat or with a single top-level
-            // dir) ends up directly under target/.
+            // dir) ends up directly under target/. preserveSourceFolderName
+            // is intentionally ignored here — there's no folder to
+            // preserve, only whatever the archive author chose.
             try await Shell.runAsync("/usr/bin/unzip", ["-q", zip.path, "-d", target.path], captureOutput: true)
         case .url:
             // Unreachable: run() resolves `.url` into a local zip via

@@ -114,7 +114,7 @@ final class DropZoneApplyTests: XCTestCase {
     func testApplyInPlaceWithBundleModeWritesInBundleConfig() async throws {
         let folder = try makeFolder(named: "Game", files: ["start.exe": "x"])
         let plan = InstallPlan(
-            config: sampleConfig(),
+            config: sampleConfig(exe: "start.exe"),
             mode: .bundle,
             source: .folder(folder)
         )
@@ -126,15 +126,20 @@ final class DropZoneApplyTests: XCTestCase {
             progress: { _ in }
         )
 
-        // cider.json went into the renamed bundle (sibling of Contents/),
-        // applicationPath = "Application", and the Application/Game/
-        // tree got materialised.
+        // schema-v3 Bundle layout: cider.json sibling of Contents/,
+        // prefixPath "System", applicationPath inside System/drive_c/...
         let inBundleConfig = final.appendingPathComponent("cider.json")
         XCTAssertTrue(FileManager.default.fileExists(atPath: inBundleConfig.path))
         let written = try CiderConfig.read(from: inBundleConfig)
-        XCTAssertEqual(written.applicationPath, "Application")
+        XCTAssertEqual(written.prefixPath, "System")
+        XCTAssertEqual(written.applicationPath,
+                       "System/drive_c/Program Files/\(displayName)")
+
+        // Source CONTENTS land directly under Program Files/<programName>/
+        // (no source-folder nesting in Bundle mode).
+        let appDir = final.appendingPathComponent(written.applicationPath)
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: final.appendingPathComponent("Application/Game/start.exe").path))
+            atPath: appDir.appendingPathComponent("start.exe").path))
         // Contents/ untouched.
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: final.appendingPathComponent("Contents/MacOS/cider").path))
@@ -403,7 +408,11 @@ final class DropZoneApplyTests: XCTestCase {
         try Data("stale".utf8).write(to: stale)
 
         let folder = try makeFolder(named: "Game", files: ["start.exe": "x"])
-        let plan = InstallPlan(config: sampleConfig(), mode: .bundle, source: .folder(folder))
+        let plan = InstallPlan(
+            config: sampleConfig(exe: "start.exe"),
+            mode: .bundle,
+            source: .folder(folder)
+        )
         let final = try await DropZoneController.performApply(
             plan: plan, target: .applyInPlace,
             currentBundle: fakeBundle, icnsURL: nil, progress: { _ in }
@@ -411,7 +420,9 @@ final class DropZoneApplyTests: XCTestCase {
         let cider = final.appendingPathComponent("cider.json")
         XCTAssertTrue(FileManager.default.fileExists(atPath: cider.path))
         let written = try CiderConfig.read(from: cider)
-        XCTAssertEqual(written.applicationPath, "Application",
-                       "the new (Bundle-mode) config replaced the stale one")
+        XCTAssertEqual(written.applicationPath,
+                       "System/drive_c/Program Files/\(displayName)",
+                       "the new (schema-v3 Bundle-mode) config replaced the stale one")
+        XCTAssertEqual(written.prefixPath, "System")
     }
 }

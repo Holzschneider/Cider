@@ -87,7 +87,16 @@ final class InstallerBundleTests: XCTestCase {
 
     // MARK: - Tests
 
-    func testBundleFolderCopiesIntoApplicationUnderSourceName() async throws {
+    private var expectedAppDir: URL {
+        // schema-v3 Bundle layout: data lives at
+        // <bundle>/System/drive_c/Program Files/<programName>/
+        bundleURL.appendingPathComponent("System")
+            .appendingPathComponent("drive_c")
+            .appendingPathComponent("Program Files")
+            .appendingPathComponent("BundleTest")  // == sampleConfig's name
+    }
+
+    func testBundleFolderDropsContentsIntoProgramFiles() async throws {
         let folder = try makeFolder(named: "MyGame", files: [
             "start.exe": "exe-bytes",
             "data/foo.dat": "data-bytes"
@@ -95,29 +104,36 @@ final class InstallerBundleTests: XCTestCase {
         let result = try await Installer().run(
             source: .folder(folder),
             mode: .bundle,
-            baseConfig: sampleConfig("MyGame/start.exe"),
+            baseConfig: sampleConfig("start.exe"),
             bundleURL: bundleURL
         )
 
         XCTAssertEqual(result.mode, .bundle)
-        XCTAssertEqual(result.applicationPath, "Application")
 
         // cider.json sits next to Contents/, not inside it.
         XCTAssertEqual(result.configFileURL,
                        bundleURL.appendingPathComponent("cider.json"))
 
-        let appDir = bundleURL.appendingPathComponent("Application")
-        let copiedExe = appDir.appendingPathComponent("MyGame/start.exe")
-        let copiedData = appDir.appendingPathComponent("MyGame/data/foo.dat")
+        let written = try CiderConfig.read(from: result.configFileURL)
+        XCTAssertEqual(written.applicationPath,
+                       "System/drive_c/Program Files/BundleTest")
+        XCTAssertEqual(written.prefixPath, "System")
+
+        // Bundle mode drops the source folder NAME — contents land
+        // directly under Program Files/<programName>/. The exe field
+        // is therefore relative to that directory.
+        let copiedExe = expectedAppDir.appendingPathComponent("start.exe")
+        let copiedData = expectedAppDir.appendingPathComponent("data/foo.dat")
         XCTAssertTrue(FileManager.default.fileExists(atPath: copiedExe.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: copiedData.path))
 
-        // Resolving the exe through the in-bundle cider.json lands on the
-        // copied file inside Application/.
-        let written = try CiderConfig.read(from: result.configFileURL)
-        XCTAssertEqual(written.applicationPath, "Application")
+        // Resolving the exe through the in-bundle cider.json lands on
+        // the copied file.
         XCTAssertEqual(written.resolvedExecutable(configFile: result.configFileURL).path,
                        copiedExe.standardizedFileURL.path)
+        // resolvedPrefixDirectory points at the in-bundle System/.
+        XCTAssertEqual(written.resolvedPrefixDirectory(configFile: result.configFileURL)?.path,
+                       bundleURL.appendingPathComponent("System").path)
     }
 
     func testBundleZipWithTopLevelDirPreservesIt() async throws {
@@ -125,22 +141,20 @@ final class InstallerBundleTests: XCTestCase {
             "MyGame/start.exe": "exe-bytes",
             "MyGame/data/foo.dat": "data-bytes"
         ])
-        let result = try await Installer().run(
+        _ = try await Installer().run(
             source: .zip(zip),
             mode: .bundle,
             baseConfig: sampleConfig("MyGame/start.exe"),
             bundleURL: bundleURL
         )
 
-        let appDir = bundleURL.appendingPathComponent("Application")
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: appDir.appendingPathComponent("MyGame/start.exe").path))
+            atPath: expectedAppDir.appendingPathComponent("MyGame/start.exe").path))
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: appDir.appendingPathComponent("MyGame/data/foo.dat").path))
-        XCTAssertEqual(result.applicationPath, "Application")
+            atPath: expectedAppDir.appendingPathComponent("MyGame/data/foo.dat").path))
     }
 
-    func testBundleZipWithFlatContentsLandsAtApplicationRoot() async throws {
+    func testBundleZipWithFlatContentsLandsAtProgramFilesRoot() async throws {
         let zip = try makeZip(named: "Flat", contents: [
             "start.exe": "exe-bytes",
             "lib.dll": "dll-bytes"
@@ -152,38 +166,38 @@ final class InstallerBundleTests: XCTestCase {
             bundleURL: bundleURL
         )
 
-        let appDir = bundleURL.appendingPathComponent("Application")
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: appDir.appendingPathComponent("start.exe").path))
+            atPath: expectedAppDir.appendingPathComponent("start.exe").path))
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: appDir.appendingPathComponent("lib.dll").path))
+            atPath: expectedAppDir.appendingPathComponent("lib.dll").path))
 
         let written = try CiderConfig.read(from: result.configFileURL)
         XCTAssertEqual(written.resolvedExecutable(configFile: result.configFileURL)
                        .standardizedFileURL.path,
-                       appDir.appendingPathComponent("start.exe")
+                       expectedAppDir.appendingPathComponent("start.exe")
                        .standardizedFileURL.path)
     }
 
     func testBundleReplacesExistingApplicationContent() async throws {
-        // Pre-seed Application/ with stale data so we can verify it gets wiped.
-        let appDir = bundleURL.appendingPathComponent("Application")
-        try FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        try Data("stale".utf8).write(to: appDir.appendingPathComponent("STALE_MARKER"))
+        // Pre-seed the new layout's data dir with stale content.
+        try FileManager.default.createDirectory(
+            at: expectedAppDir, withIntermediateDirectories: true)
+        try Data("stale".utf8).write(
+            to: expectedAppDir.appendingPathComponent("STALE_MARKER"))
 
         let folder = try makeFolder(named: "Fresh", files: ["start.exe": "fresh"])
         _ = try await Installer().run(
             source: .folder(folder),
             mode: .bundle,
-            baseConfig: sampleConfig("Fresh/start.exe"),
+            baseConfig: sampleConfig("start.exe"),
             bundleURL: bundleURL
         )
 
         XCTAssertFalse(FileManager.default.fileExists(
-            atPath: appDir.appendingPathComponent("STALE_MARKER").path),
-            "previous Application/ content must be cleared on re-bundle")
+            atPath: expectedAppDir.appendingPathComponent("STALE_MARKER").path),
+            "previous Program Files content must be cleared on re-bundle")
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: appDir.appendingPathComponent("Fresh/start.exe").path))
+            atPath: expectedAppDir.appendingPathComponent("start.exe").path))
     }
 
     func testBundleDoesNotTouchContents() async throws {

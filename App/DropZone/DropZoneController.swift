@@ -353,6 +353,22 @@ final class DropZoneController {
         if FileManager.default.fileExists(atPath: v1.path) {
             try FileManager.default.removeItem(at: v1)
         }
+        // schema-v2 Bundle mode parked the data under Application/.
+        // Always remove it: schema-v3 uses System/ instead, and a stale
+        // Application/ would just take up disk.
+        let v2Application = bundle.appendingPathComponent("Application", isDirectory: true)
+        if FileManager.default.fileExists(atPath: v2Application.path) {
+            try FileManager.default.removeItem(at: v2Application)
+        }
+        // Switching away from Bundle mode (Install / Link) — wipe the
+        // in-bundle System/ tree too. Switching INTO Bundle mode is
+        // handled by Installer.installBundle which resets the target.
+        if !keepingForBundleMode {
+            let system = bundle.appendingPathComponent("System", isDirectory: true)
+            if FileManager.default.fileExists(atPath: system.path) {
+                try FileManager.default.removeItem(at: system)
+            }
+        }
     }
 
     nonisolated static func configURL(for plan: InstallPlan, bundle: URL) -> URL {

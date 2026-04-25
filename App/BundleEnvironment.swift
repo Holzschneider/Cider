@@ -40,17 +40,8 @@ public struct BundleEnvironment {
         bundleURL.appendingPathComponent("cider.json")
     }
 
-    // Bundle-mode application data lives in <bundle>/Application/.
-    public var bundleApplicationDir: URL {
-        bundleURL.appendingPathComponent("Application", isDirectory: true)
-    }
-
     public var appSupportConfigFile: URL {
         AppSupport.config(forBundleNamed: bundleName)
-    }
-
-    public var prefixDir: URL {
-        AppSupport.prefix(forBundleNamed: bundleName)
     }
 
     public var runtimeStatsFile: URL {
