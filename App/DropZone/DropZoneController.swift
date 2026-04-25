@@ -273,9 +273,20 @@ final class DropZoneController {
                 withIntermediateDirectories: true
             )
             progress(.phaseStarted(id: PhaseID.clone.rawValue))
-            // cp -a preserves codesign xattrs.
-            try await Shell.runAsync("/bin/cp", ["-a", currentBundle.path, dest.path],
-                                     captureOutput: true)
+            // cp -a preserves codesign xattrs. Polled progress lets the
+            // bundle clone show real percentages (a fresh Cider.app is
+            // small but a clone of an already-Created Bundle could be
+            // multi-GB once data has landed in System/).
+            try await Shell.runCopyWithPolledProgress(
+                executable: "/bin/cp",
+                arguments: ["-a", currentBundle.path, dest.path],
+                sourcePath: currentBundle.path,
+                destinationPath: dest.path,
+                progress: { f in
+                    progress(.phaseProgress(id: PhaseID.clone.rawValue,
+                                            fraction: f, detail: ""))
+                }
+            )
             progress(.phaseDone(id: PhaseID.clone.rawValue))
             partialClone = dest
         }
@@ -414,15 +425,16 @@ final class DropZoneController {
         if case .cloneTo = target {
             phases.append(.init(id: PhaseID.clone.rawValue,
                                 label: "Cloning bundle",
-                                kind: .indeterminate))
+                                kind: .determinate))
         }
         if let source = plan.source {
             switch source {
             case .folder:
                 phases.append(.init(id: PhaseID.copyFolder.rawValue,
                                     label: "Copying source",
-                                    kind: .indeterminate))
+                                    kind: .determinate))
             case .zip:
+                // Unzip has no per-byte progress channel — leave indeterminate.
                 phases.append(.init(id: PhaseID.extractZip.rawValue,
                                     label: "Extracting source",
                                     kind: .indeterminate))

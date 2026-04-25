@@ -310,19 +310,27 @@ public struct Installer {
         case .folder(let src):
             try ensureExists(src, kind: .folder)
             progress?(.stage("Copying source", detail: src.lastPathComponent))
-            if preserveSourceFolderName {
-                // Install mode: cp -R preserves the source's name as
-                // the top-level entry under target/. The user-spec
-                // rule:  /tmp/MyGame copied into target/  →  target/MyGame/
-                try await Shell.runAsync("/bin/cp", ["-R", src.path, target.path],
-                                         captureOutput: true)
-            } else {
-                // Bundle mode: drop CONTENTS of the source folder into
-                // target/ directly — no extra nesting. ditto's two-arg
-                // form does exactly this and ships with macOS.
-                try await Shell.runAsync("/usr/bin/ditto", [src.path, target.path],
-                                         captureOutput: true)
-            }
+            // Polled progress driver — the active phase in the sheet
+            // shows a real bar instead of an indeterminate spinner.
+            // For the source-name-preserving path the destination
+            // folder cp creates is target/<src.lastname>/; for the
+            // contents-only path it's target/ itself. du polls the
+            // post-copy parent so both cases produce a sensible
+            // fraction.
+            let pollDest: String = preserveSourceFolderName
+                ? target.appendingPathComponent(src.lastPathComponent).path
+                : target.path
+            let copyExe: String   = preserveSourceFolderName ? "/bin/cp" : "/usr/bin/ditto"
+            let copyArgs: [String] = preserveSourceFolderName
+                ? ["-R", src.path, target.path]
+                : [src.path, target.path]
+            try await Shell.runCopyWithPolledProgress(
+                executable: copyExe,
+                arguments: copyArgs,
+                sourcePath: src.path,
+                destinationPath: pollDest,
+                progress: { f in progress?(.fraction(f)) }
+            )
         case .zip(let zip):
             try ensureExists(zip, kind: .zip)
             progress?(.stage("Extracting archive", detail: zip.lastPathComponent))

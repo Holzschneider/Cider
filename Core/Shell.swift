@@ -144,6 +144,70 @@ public extension Shell {
     }
 }
 
+// MARK: - Copy with polled progress
+
+public extension Shell {
+    // Spawns a copy command (cp -R, cp -a, ditto, …) and reports a
+    // 0–1 fraction by polling the destination's `du -sk` against a
+    // pre-computed source size every ~250 ms. Imprecise (du visits the
+    // whole tree on each poll) but works with stock macOS tools and
+    // gracefully degrades on very large trees — the user sees a bar
+    // that keeps moving instead of an indeterminate spinner. Cancellation
+    // works the same way as runAsync — SIGTERM the copy child, throw
+    // CancellationError.
+    @discardableResult
+    static func runCopyWithPolledProgress(
+        executable: String,
+        arguments: [String],
+        sourcePath: String,
+        destinationPath: String,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> Result {
+        // Pre-compute source size in 1KB blocks. If du fails (broken
+        // permissions, etc.) we fall back to indeterminate by reporting
+        // no fraction events.
+        let sourceKB = try? duSizeKB(of: sourcePath)
+        let totalKB = sourceKB ?? 0
+
+        // Spawn the polling task; it lives until the copy completes or
+        // we cancel.
+        let pollTask = Task<Void, Never>(priority: .background) {
+            guard totalKB > 0 else { return }
+            while !Task.isCancelled {
+                let doneKB = (try? duSizeKB(of: destinationPath)) ?? 0
+                let fraction = min(max(Double(doneKB) / Double(totalKB), 0), 0.999)
+                progress(fraction)
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
+        defer { pollTask.cancel() }
+
+        let result = try await runAsync(executable, arguments)
+        // One last 100% beat so the bar settles.
+        if totalKB > 0 { progress(1.0) }
+        return result
+    }
+
+    // `du -sk path` → kilobytes used. Returns 0 when du can't read the
+    // path (e.g. it doesn't exist yet — true for the destination on
+    // the first few polls).
+    private static func duSizeKB(of path: String) throws -> Int64 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/du")
+        process.arguments = ["-sk", path]
+        let outPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        let out = String(decoding: outPipe.fileHandleForReading.readDataToEndOfFile(),
+                         as: UTF8.self)
+        // Output looks like:  "12345\t/path/to/dir"
+        let firstField = out.split(whereSeparator: { $0 == " " || $0 == "\t" }).first
+        return firstField.flatMap { Int64($0) } ?? 0
+    }
+}
+
 // Tiny thread-safe boolean. Only set, never unset.
 private final class CancelFlag: @unchecked Sendable {
     private let lock = NSLock()
