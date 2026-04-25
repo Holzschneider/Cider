@@ -96,14 +96,22 @@ public final class LaunchPipeline {
             try? stats.write(to: AppSupport.runtimeStats(forBundleNamed: bundleName))
         }
 
-        // 6. Stage payload (symlinks).
-        progress("Linking source into prefix", "", nil)
-        let winExePath = try prefixInit.stagePayload(
-            from: applicationDir,
-            exeRelativePath: config.exe,
-            programName: bundleName,
-            mode: .symlinks
-        )
+        // 6. Stage payload — single symlink Program Files/<bundleName>
+        //    → applicationDir. Skipped for in-bundle prefixes (Bundle
+        //    mode), where applicationDir is already at exactly that
+        //    spot inside the prefix and Wine sees it natively.
+        let winExePath: String
+        if isInBundlePrefix(config: config, configFile: configFileURL) {
+            winExePath = "C:\\Program Files\\\(bundleName)\\"
+                + config.exe.replacingOccurrences(of: "/", with: "\\")
+        } else {
+            progress("Linking source into prefix", "", nil)
+            winExePath = try prefixInit.stagePayload(
+                from: applicationDir,
+                exeRelativePath: config.exe,
+                programName: bundleName
+            )
+        }
 
         // 7. Graphics driver DLLs.
         progress("Installing graphics driver", config.graphics.rawValue, nil)
@@ -203,6 +211,14 @@ public final class LaunchPipeline {
         }
         let identity = PrefixIdentity.compute(for: config)
         return AppSupport.prefix(forIdentityKey: identity.key)
+    }
+
+    // True when the config's prefix lives inside the .app bundle
+    // (Bundle mode). In that layout the application data is already
+    // sitting under the prefix's drive_c/Program Files/<programName>/
+    // — no staging symlink needed.
+    private func isInBundlePrefix(config: CiderConfig, configFile: URL) -> Bool {
+        config.resolvedPrefixDirectory(configFile: configFile) != nil
     }
 
     // Copy the template's Frameworks/ next to wswine.bundle/ inside the
