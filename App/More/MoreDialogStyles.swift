@@ -36,11 +36,10 @@ enum DialogTheme {
 }
 
 // Right-aligned dim section row label, optionally preceded by a small
-// red (!) marker pinned to the label's left side. The marker auto-shows
-// a transient bubble (~3 s) when the error first appears or changes,
-// re-shows on hover, and disappears otherwise. The marker + label sit
-// inside the right-aligned label gutter so the layout doesn't shift
-// when an error toggles on/off.
+// red (!) marker pinned to the label's left side. The marker shows the
+// error message as a standard macOS tooltip on hover. Marker + label
+// sit inside the right-aligned label gutter so the layout doesn't
+// shift when the error toggles on/off.
 struct DialogRowLabel: View {
     let text: String
     var error: String? = nil
@@ -55,79 +54,19 @@ struct DialogRowLabel: View {
     }
 }
 
-// Small (!) glyph that pops a red callout bubble to its left when the
-// error first appears, again whenever the message changes, and on
-// hover. Auto-hides ~3 s after the trigger if the cursor isn't over
-// the glyph. Uses native NSPopover under the hood — only one bubble
-// shows at a time across the whole window, which is fine for this
-// dialog (a single visible bubble + the row's red glyph for any
-// silent siblings reads as "fix these").
+// Small (!) glyph that surfaces an error message as a native macOS
+// tooltip when the cursor sits over it. No auto-popup; the red glyph
+// is signal enough that something needs attention.
 struct ErrorMarker: View {
     let message: String?
-
-    @State private var isShowing: Bool = false
-    @State private var hideTask: Task<Void, Never>?
-    @State private var lastMessage: String? = nil
-    @State private var isHovering: Bool = false
-
-    private static let visibleSeconds: Double = 3.0
-
     var body: some View {
-        Group {
-            if let message {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .foregroundStyle(.red)
-                    .font(.system(size: 12, weight: .regular))
-                    .accessibilityLabel(message)
-                    .onAppear {
-                        triggerIfChanged(message)
-                    }
-                    .onChange(of: message) { newValue in
-                        triggerIfChanged(newValue)
-                    }
-                    .onHover { hovering in
-                        isHovering = hovering
-                        if hovering {
-                            show(message: message)
-                        } else {
-                            scheduleHide()
-                        }
-                    }
-                    .popover(isPresented: $isShowing, arrowEdge: .trailing) {
-                        Text(message)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.primary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .frame(maxWidth: 280, alignment: .leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-            }
+        if let message {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.red)
+                .font(.system(size: 12, weight: .regular))
+                .help(message)
+                .accessibilityLabel(message)
         }
-    }
-
-    private func triggerIfChanged(_ msg: String) {
-        guard msg != lastMessage else { return }
-        lastMessage = msg
-        show(message: msg)
-    }
-
-    private func show(message: String) {
-        hideTask?.cancel()
-        if !isShowing { isShowing = true }
-        scheduleHide()
-    }
-
-    private func scheduleHide() {
-        hideTask?.cancel()
-        let task = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(Self.visibleSeconds * 1_000_000_000))
-            if Task.isCancelled { return }
-            // Stay open while the cursor sits on the glyph.
-            if isHovering { return }
-            isShowing = false
-        }
-        hideTask = task
     }
 }
 
