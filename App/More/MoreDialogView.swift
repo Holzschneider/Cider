@@ -133,7 +133,11 @@ struct MoreDialogView: View {
     private var installModeHelp: String {
         switch vm.installMode {
         case .install:
-            return "Copy the source into ~/Library/Application Support/Cider/Program Files/<DisplayName>/. The .app bundle stays small."
+            // Mirror what the orchestrator actually uses for the
+            // AppSupport slot: the sanitised Application Name.
+            let sanitised = BundleTransmogrifier.sanitiseBundleName(vm.displayName)
+            let slot = sanitised.isEmpty ? "<Application Name>" : sanitised
+            return "Copy the source into ~/Library/Application Support/Cider/Program Files/\(slot)/. The .app bundle stays small."
         case .bundle:
             return "Copy the source inside the .app bundle (sibling of Contents/). Bundle stays self-contained and portable."
         case .link:
