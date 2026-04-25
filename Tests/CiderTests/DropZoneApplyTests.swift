@@ -380,10 +380,11 @@ final class DropZoneApplyTests: XCTestCase {
             atPath: AppSupport.config(forBundleNamed: oldName).path),
             "old config must be cleaned up after rename")
 
-        // New entries are in place.
+        // New entries are in place — Install mode now drops the source
+        // folder name, so files land directly under Program Files/<name>/.
         let newDir = AppSupport.programFiles(forBundleNamed: displayName)
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: newDir.appendingPathComponent("Game/start.exe").path))
+            atPath: newDir.appendingPathComponent("start.exe").path))
     }
 
     func testFreshInstallFromVanillaCiderHasNoOldNameToCleanUp() async throws {

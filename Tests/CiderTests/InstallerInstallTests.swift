@@ -87,15 +87,18 @@ final class InstallerInstallTests: XCTestCase {
 
     // MARK: - Tests
 
-    func testInstallFolderCopiesIntoProgramFilesUnderSourceName() async throws {
+    func testInstallFolderDropsContentsIntoProgramFiles() async throws {
         let folder = try makeFolder(named: "MyGame", files: [
             "start.exe": "exe-bytes",
             "data/foo.dat": "data-bytes"
         ])
+        // Install mode now matches Bundle: contents of the source land
+        // directly under Program Files/<DisplayName>/, no extra
+        // source-folder nesting. So exe is just "start.exe".
         let result = try await Installer().run(
             source: .folder(folder),
             mode: .install,
-            baseConfig: sampleConfig("MyGame/start.exe"),
+            baseConfig: sampleConfig("start.exe"),
             bundleURL: URL(fileURLWithPath: "/tmp/Test.app")
         )
 
@@ -104,11 +107,14 @@ final class InstallerInstallTests: XCTestCase {
         let target = AppSupport.programFiles(forBundleNamed: displayName)
         XCTAssertEqual(result.applicationPath, target.standardizedFileURL.path)
 
-        // The source folder name was preserved beneath the target.
-        let copiedExe = target.appendingPathComponent("MyGame/start.exe")
-        let copiedData = target.appendingPathComponent("MyGame/data/foo.dat")
+        // Contents land directly under target/, no nested MyGame/ dir.
+        let copiedExe = target.appendingPathComponent("start.exe")
+        let copiedData = target.appendingPathComponent("data/foo.dat")
         XCTAssertTrue(FileManager.default.fileExists(atPath: copiedExe.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: copiedData.path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: target.appendingPathComponent("MyGame").path),
+            "the source folder name must NOT appear under target/")
 
         // Re-resolving exe through the written cider.json lands on the
         // copied file.
@@ -170,7 +176,7 @@ final class InstallerInstallTests: XCTestCase {
         _ = try await Installer().run(
             source: .folder(folder),
             mode: .install,
-            baseConfig: sampleConfig("Fresh/start.exe"),
+            baseConfig: sampleConfig("start.exe"),
             bundleURL: URL(fileURLWithPath: "/tmp/Test.app")
         )
 
@@ -178,7 +184,7 @@ final class InstallerInstallTests: XCTestCase {
             atPath: target.appendingPathComponent("STALE_MARKER").path),
             "previous Program Files content must be cleared on re-install")
         XCTAssertTrue(FileManager.default.fileExists(
-            atPath: target.appendingPathComponent("Fresh/start.exe").path))
+            atPath: target.appendingPathComponent("start.exe").path))
     }
 
 }

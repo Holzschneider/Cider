@@ -223,11 +223,7 @@ public struct Installer {
         guard !displayName.isEmpty else { throw Error.invalidDisplayName }
 
         let target = AppSupport.programFiles(forBundleNamed: displayName)
-        // Install mode keeps the source folder name as the top-level
-        // entry under target/ — that's how the existing tests + form
-        // pre-fill the exe path ("MyGame/Game.exe").
-        try await materialise(source: source, into: target,
-                              preserveSourceFolderName: true, progress: progress)
+        try await materialise(source: source, into: target, progress: progress)
 
         // cider.json sits in Configs/<name>.json with applicationPath = the
         // absolute path to the materialised data. The exe path stays
@@ -278,8 +274,7 @@ public struct Installer {
         // Drop CONTENTS of the source into Program Files/<programName>/
         // — no source-folder nesting. The user's exe field is relative
         // to that program directory.
-        try await materialise(source: source, into: appDir,
-                              preserveSourceFolderName: false, progress: progress)
+        try await materialise(source: source, into: appDir, progress: progress)
 
         let configURL = bundleURL.appendingPathComponent("cider.json")
         var config = baseConfig
@@ -300,7 +295,6 @@ public struct Installer {
     private func materialise(
         source: SourceAcquisition,
         into target: URL,
-        preserveSourceFolderName: Bool,
         progress: InstallProgressCallback?
     ) async throws {
         try Task.checkCancellation()
@@ -310,34 +304,23 @@ public struct Installer {
         case .folder(let src):
             try ensureExists(src, kind: .folder)
             progress?(.stage("Copying source", detail: src.lastPathComponent))
-            // Polled progress driver — the active phase in the sheet
-            // shows a real bar instead of an indeterminate spinner.
-            // For the source-name-preserving path the destination
-            // folder cp creates is target/<src.lastname>/; for the
-            // contents-only path it's target/ itself. du polls the
-            // post-copy parent so both cases produce a sensible
-            // fraction.
-            let pollDest: String = preserveSourceFolderName
-                ? target.appendingPathComponent(src.lastPathComponent).path
-                : target.path
-            let copyExe: String   = preserveSourceFolderName ? "/bin/cp" : "/usr/bin/ditto"
-            let copyArgs: [String] = preserveSourceFolderName
-                ? ["-R", src.path, target.path]
-                : [src.path, target.path]
+            // ditto's two-arg form drops the CONTENTS of `src` into
+            // `target/` (no extra source-folder nesting). Both Install
+            // and Bundle modes use this so the user's source-relative
+            // exe field ("Game.exe") resolves correctly through the
+            // resolved applicationPath without needing a parent prefix.
             try await Shell.runCopyWithPolledProgress(
-                executable: copyExe,
-                arguments: copyArgs,
+                executable: "/usr/bin/ditto",
+                arguments: [src.path, target.path],
                 sourcePath: src.path,
-                destinationPath: pollDest,
+                destinationPath: target.path,
                 progress: { f in progress?(.fraction(f)) }
             )
         case .zip(let zip):
             try ensureExists(zip, kind: .zip)
             progress?(.stage("Extracting archive", detail: zip.lastPathComponent))
             // Whatever the zip contains (flat or with a single top-level
-            // dir) ends up directly under target/. preserveSourceFolderName
-            // is intentionally ignored here — there's no folder to
-            // preserve, only whatever the archive author chose.
+            // dir) ends up directly under target/.
             try await Shell.runAsync("/usr/bin/unzip", ["-q", zip.path, "-d", target.path], captureOutput: true)
         case .url:
             // Unreachable: run() resolves `.url` into a local zip via
