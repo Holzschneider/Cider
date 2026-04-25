@@ -182,6 +182,28 @@ final class MoreDialogViewModel: ObservableObject {
         }
     }
 
+    // Resolves `iconFile` to an absolute on-disk URL: an absolute path
+    // is returned as-is; a relative path is resolved against the source
+    // folder if the source is a local folder. Returns nil if the field
+    // is empty or the relative resolution can't reach a folder source
+    // (e.g. drag-from-zip / URL drops).
+    var resolvedIconURL: URL? {
+        let trimmed = iconFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded)
+        }
+        // Relative — resolve against the source folder when we have one.
+        if case .folder(let folder) = sourceAcquisition {
+            return folder.appendingPathComponent(expanded)
+        }
+        if let absoluteSource = sourceForBrowsing {
+            return absoluteSource.appendingPathComponent(expanded)
+        }
+        return nil
+    }
+
     // Returns the URL the user can browse for an executable, or nil if
     // browsing isn't applicable (path empty / not on disk / URL). The
     // picker uses sourcePath first (pre-install), then falls back to

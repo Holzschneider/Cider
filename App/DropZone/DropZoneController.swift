@@ -131,7 +131,7 @@ final class DropZoneController {
     private func runApply(plan: InstallPlan, target: ApplyTarget) async {
         let icnsURL: URL?
         do {
-            icnsURL = try resolveIcon(for: plan.config)
+            icnsURL = try resolveIcon(for: plan.config, source: plan.source)
         } catch {
             showAlert("Could not prepare icon", error)
             return
@@ -207,10 +207,22 @@ final class DropZoneController {
 
     // If the configured icon path isn't already .icns, convert it to one
     // via IconConverter. Accepts PNG, JPEG, and Windows .ico (and
-    // anything else NSImage can read). nil if there's no icon configured.
-    private func resolveIcon(for config: CiderConfig) throws -> URL? {
+    // anything else NSImage can read). Relative icon paths are resolved
+    // against the source folder (only meaningful for `.folder` sources).
+    // nil if there's no icon configured.
+    private func resolveIcon(for config: CiderConfig, source: SourceAcquisition?) throws -> URL? {
         guard let iconPath = config.icon, !iconPath.isEmpty else { return nil }
-        let url = URL(fileURLWithPath: iconPath)
+        let expanded = (iconPath as NSString).expandingTildeInPath
+        let url: URL
+        if expanded.hasPrefix("/") {
+            url = URL(fileURLWithPath: expanded)
+        } else if case .folder(let folder)? = source {
+            url = folder.appendingPathComponent(expanded)
+        } else {
+            // Relative path with no folder source to resolve against —
+            // fall back to CWD-relative (the legacy behaviour).
+            url = URL(fileURLWithPath: expanded)
+        }
         if url.pathExtension.lowercased() == "icns" {
             return url
         }

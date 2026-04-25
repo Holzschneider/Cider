@@ -314,11 +314,83 @@ struct MoreDialogView: View {
                 }
                 .toggleStyle(.checkbox)
             }
-            row("App icon") {
-                pathPicker(text: $vm.iconFile,
-                           placeholder: "icon.png, icon.ico, or icon.icns",
-                           filter: .image)
+            row("App icon",
+                help: "PNG / JPEG / Windows .ico / .icns. Picking a file inside the source folder writes a relative path; anything outside writes an absolute path.") {
+                VStack(alignment: .leading, spacing: 8) {
+                    iconPathPicker(text: $vm.iconFile,
+                                   placeholder: "icon.png, icon.ico, or icon.icns")
+                    iconPreview()
+                }
             }
+        }
+    }
+
+    private func iconPathPicker(text: Binding<String>, placeholder: String) -> some View {
+        HStack(spacing: 8) {
+            TextField(placeholder, text: text)
+                .textFieldStyle(DialogTextFieldStyle(monospaced: true))
+            Button("Browse…") {
+                chooseIcon(into: text)
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    @ViewBuilder
+    private func iconPreview() -> some View {
+        if let url = vm.resolvedIconURL,
+           FileManager.default.fileExists(atPath: url.path),
+           let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 128, height: 128)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.black.opacity(0.18))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(DialogTheme.fieldBorder, lineWidth: 0.5)
+                )
+        }
+    }
+
+    private func chooseIcon(into binding: Binding<String>) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        var types: [UTType] = [.png, .jpeg, .icns]
+        if let ico = UTType("com.microsoft.ico") {
+            types.append(ico)
+        }
+        panel.allowedContentTypes = types
+
+        // Root the panel inside the source folder when possible — the
+        // icon usually ships alongside the game files.
+        let sourceFolder: URL? = {
+            if case .folder(let folder) = vm.sourceAcquisition { return folder }
+            return vm.sourceForBrowsing
+        }()
+        if let folder = sourceFolder {
+            panel.directoryURL = folder
+        }
+
+        let pick: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, let picked = panel.url else { return }
+            if let folder = sourceFolder,
+               let rel = relativePath(of: picked, under: folder) {
+                binding.wrappedValue = rel
+            } else {
+                binding.wrappedValue = picked.path
+            }
+        }
+        if let parent = NSApp.keyWindow {
+            panel.beginSheetModal(for: parent, completionHandler: pick)
+        } else {
+            pick(panel.runModal())
         }
     }
 
