@@ -26,26 +26,41 @@ public final class SplashController {
     private var splashWindow: SplashWindow?
     private var splashContent: SplashContentView?
     private var loadingWindow: LoadingWindow?
+    private var resignActiveObserver: NSObjectProtocol?
+    private var loadingResignKeyObserver: NSObjectProtocol?
+
+    public enum Mode {
+        // Real launch — close on app-level resignActive (wine's
+        // window came up and stole focus from Cider).
+        case live
+        // Preview from Configure → close on window-level resignKey
+        // (any click elsewhere, even inside Cider, dismisses).
+        case preview
+    }
 
     private let image: NSImage?
     private let showLoadingWindow: Bool
+    private let mode: Mode
 
     // Callback for the splash double-click — Phase 9 routes this to the
     // MoreDialog reopen path so a configured bundle can be reconfigured.
     public var onDoubleClick: (() -> Void)?
 
-    public init(image: NSImage?, showLoadingWindow: Bool) {
+    public init(image: NSImage?, showLoadingWindow: Bool, mode: Mode = .live) {
         self.image = image
         self.showLoadingWindow = showLoadingWindow
+        self.mode = mode
     }
 
     public static func load(splashFile: URL?,
-                            showLoadingWindow: Bool) -> SplashController? {
+                            showLoadingWindow: Bool,
+                            mode: Mode = .live) -> SplashController? {
         let image: NSImage? = splashFile.flatMap { NSImage(contentsOf: $0) }
         // No image AND no loading window → no UI at all → no
         // controller (caller falls back to its own behaviour).
         if image == nil, !showLoadingWindow { return nil }
-        return SplashController(image: image, showLoadingWindow: showLoadingWindow)
+        return SplashController(image: image, showLoadingWindow: showLoadingWindow,
+                                mode: mode)
     }
 
     // Builds and shows whichever windows are configured. Splash sits
@@ -71,6 +86,27 @@ public final class SplashController {
             self.loadingWindow = loading
             positionLoadingBelowSplash(loading)
             loading.makeKeyAndOrderFront(nil)
+
+            switch mode {
+            case .live:
+                // Wine's window appearing pulls focus away from
+                // Cider entirely → app-level resignActive fires.
+                resignActiveObserver = NotificationCenter.default.addObserver(
+                    forName: NSApplication.didResignActiveNotification,
+                    object: nil, queue: .main
+                ) { [weak self] _ in
+                    self?.requestClose()
+                }
+            case .preview:
+                // Anything else clicked (Configure dialog, Finder,
+                // …) takes key from the preview window.
+                loadingResignKeyObserver = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didResignKeyNotification,
+                    object: loading, queue: .main
+                ) { [weak self] _ in
+                    self?.requestClose()
+                }
+            }
         }
 
         // Forward the legacy ProgressModel.title/detail events into
@@ -108,6 +144,14 @@ public final class SplashController {
     // loading window's (X) — orchestration of "kill the wine
     // process if alive" lives in WineLauncher / CLIRouter.
     public func requestClose() {
+        if let obs = resignActiveObserver {
+            NotificationCenter.default.removeObserver(obs)
+            resignActiveObserver = nil
+        }
+        if let obs = loadingResignKeyObserver {
+            NotificationCenter.default.removeObserver(obs)
+            loadingResignKeyObserver = nil
+        }
         loadingWindow?.orderOut(nil)
         splashWindow?.orderOut(nil)
         loadingWindow = nil

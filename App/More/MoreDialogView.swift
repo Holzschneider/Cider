@@ -361,7 +361,40 @@ struct MoreDialogView: View {
                 iconPathPicker(text: $vm.iconFile,
                                placeholder: "icon.png, icon.ico, or icon.icns")
             }
+
+            // Preview the splash + loading windows with the current
+            // form values. Loading bar shows at 45 % so the user can
+            // verify the visual fits. Dismisses on the (X), on focus
+            // loss, or after 8 s.
+            row(" ") {
+                HStack {
+                    Spacer()
+                    Button("Preview…") {
+                        SplashPreview.show(
+                            splashURL: previewSplashURL(),
+                            loadingEnabled: vm.loadingEnabled
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
         }
+    }
+
+    // Resolve the Splash field for the preview the same way
+    // SplashAssetStager / launch resolve it: absolute → as-is;
+    // relative → against the source folder when known.
+    private func previewSplashURL() -> URL? {
+        let raw = vm.splashFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        let expanded = (raw as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded)
+        }
+        if case .folder(let folder) = vm.sourceAcquisition {
+            return folder.appendingPathComponent(expanded)
+        }
+        return nil
     }
 
     private func iconPathPicker(text: Binding<String>, placeholder: String) -> some View {
