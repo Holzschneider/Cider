@@ -273,6 +273,73 @@ final class MoreDialogViewModelTests: XCTestCase {
         XCTAssertEqual(vm.generalError, "Apply failed: HTTP 404")
     }
 
+    // MARK: - Reset
+
+    func testResetToDefaultsClearsLoadedFields() {
+        let original = CiderConfig(
+            displayName: "Foo",
+            applicationPath: "/Users/me/Foo",
+            exe: "Foo.exe",
+            args: ["/log"],
+            engine: .init(name: "Custom", url: "https://example.com/c.tar.xz",
+                          sha256: "deadbeef"),
+            graphics: .dxvk,
+            wine: .init(esync: false, msync: false, useWinedbg: true,
+                        winetricks: ["corefonts"],
+                        console: true, inheritConsole: true),
+            splash: .init(file: "splash.png", transparent: false),
+            icon: "icon.icns",
+            originURL: "https://example.org/cider.json",
+            distributionURL: "https://example.org/Foo.zip"
+        )
+        let vm = MoreDialogViewModel()
+        vm.load(from: original)
+        // Also seed external errors so we can verify Reset clears them.
+        vm.generalError = "previous failure"
+        vm.externalSourceError = "missing source"
+        vm.externalExeError = "missing exe"
+
+        vm.resetToDefaults()
+
+        // Required-input fields are blank.
+        XCTAssertEqual(vm.displayName, "")
+        XCTAssertEqual(vm.exe, "")
+        XCTAssertEqual(vm.argsText, "")
+        XCTAssertEqual(vm.applicationPath, "")
+        XCTAssertEqual(vm.sourcePath, "")
+        XCTAssertEqual(vm.originURL, "")
+        XCTAssertEqual(vm.installMode, .install)
+        XCTAssertNil(vm.originalDisplayName,
+                     "Reset should drop the post-load identity so a fresh save isn't seen as a rename")
+
+        // Engine/template fields back to brand-new defaults.
+        XCTAssertEqual(vm.engineName, "")
+        XCTAssertEqual(vm.engineURL, "")
+        XCTAssertEqual(vm.engineSha256, "")
+        XCTAssertEqual(vm.useCustomRepository, false)
+        XCTAssertEqual(vm.customRepositoryURL, "")
+        XCTAssertEqual(vm.templateVersion, CiderConfig.TemplateRef.default.version)
+        XCTAssertEqual(vm.templateURL, CiderConfig.TemplateRef.default.url)
+        XCTAssertEqual(vm.templateSha256, "")
+
+        // Graphics + wine + presentation back to defaults.
+        XCTAssertEqual(vm.graphics, .defaultForThisMachine)
+        XCTAssertEqual(vm.wineEsync, true)
+        XCTAssertEqual(vm.wineMsync, true)
+        XCTAssertEqual(vm.wineUseWinedbg, false)
+        XCTAssertEqual(vm.wineConsole, false)
+        XCTAssertEqual(vm.wineInheritConsole, false)
+        XCTAssertEqual(vm.winetricksText, "")
+        XCTAssertEqual(vm.splashFile, "")
+        XCTAssertEqual(vm.splashTransparent, true)
+        XCTAssertEqual(vm.iconFile, "")
+
+        // Errors cleared.
+        XCTAssertNil(vm.generalError)
+        XCTAssertNil(vm.externalSourceError)
+        XCTAssertNil(vm.externalExeError)
+    }
+
     // MARK: - Helpers
 
     private func sampleConfig(applicationPath: String) -> CiderConfig {

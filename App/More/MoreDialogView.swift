@@ -374,6 +374,13 @@ struct MoreDialogView: View {
         VStack(spacing: 0) {
             Rectangle().fill(DialogTheme.hairline).frame(height: 0.5)
             HStack(spacing: 10) {
+                // Reset wipes the form back to a brand-new defaults
+                // state — useful when a Configure session has gone off
+                // the rails. No keyEquivalent (no .destructive role —
+                // the Save button is still the default action).
+                Button("Reset") { vm.resetToDefaults() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                 statusPill
                 Spacer()
                 // Native styles here — custom ButtonStyle wrappers were

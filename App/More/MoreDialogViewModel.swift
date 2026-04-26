@@ -120,6 +120,56 @@ final class MoreDialogViewModel: ObservableObject {
 
     // MARK: - Round-trip
 
+    // Reset every form field to its brand-new default — the same
+    // state a freshly-presented MoreDialog has when no drop seed and
+    // no prefill is supplied. Clears any active error banners and
+    // per-field overrides so the form starts visibly clean.
+    func resetToDefaults() {
+        displayName = ""
+        exe = ""
+        argsText = ""
+
+        installMode = .install
+        sourcePath = ""
+        applicationPath = ""
+        originURL = ""
+        originalDisplayName = nil
+
+        engineName = ""
+        engineURL = ""
+        engineSha256 = ""
+        useCustomRepository = false
+        customRepositoryURL = ""
+        // availableEngines / isFetchingEngines / catalogError are
+        // catalog-fetch state, not user input — leave them alone so
+        // the engine picker doesn't blank-out and re-fetch.
+
+        templateVersion = CiderConfig.TemplateRef.default.version
+        templateURL = CiderConfig.TemplateRef.default.url
+        templateSha256 = ""
+
+        graphics = .defaultForThisMachine
+
+        wineEsync = true
+        wineMsync = true
+        wineUseWinedbg = false
+        wineConsole = false
+        wineInheritConsole = false
+        winetricksText = ""
+
+        splashFile = ""
+        splashTransparent = true
+        iconFile = ""
+
+        generalError = nil
+        externalSourceError = nil
+        externalExeError = nil
+
+        // Re-prime the engine catalog so the EditableComboBox shows
+        // its default suggestion (matches first-open behaviour).
+        refreshEngineCatalog(initial: true)
+    }
+
     func load(from config: CiderConfig) {
         displayName = config.displayName
         originalDisplayName = config.displayName
