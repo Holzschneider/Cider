@@ -415,6 +415,15 @@ final class DropZoneController {
                 cleanupOrphanedAppSupport(name: oldName, mode: plan.mode)
             }
 
+            // 5.5. Splash asset staging — copy the splash into the
+            //      mode-appropriate location and rewrite cider.json's
+            //      splash.file with the (possibly sanitised) path.
+            //      Silent — no phase entry; cheap.
+            try await stageSplashIntoConfig(
+                plan: plan, target: target,
+                bundle: bundle, newName: newName
+            )
+
             // 6. Preflight — engine / template / prefix / graphics.
             if let preflight {
                 let writtenConfigURL = configURL(forName: newName,
@@ -580,6 +589,46 @@ final class DropZoneController {
         case .phasesDeclared, .phaseStarted, .phaseProgress,
              .phaseDone, .phaseFailed:
             progress(event)
+        }
+    }
+
+    // Reads the cider.json the Installer (or no-source branch) just
+    // wrote, runs the splash file through SplashAssetStager, and
+    // re-writes the JSON only if the splash field needed changing
+    // (path canonicalised, copy moved, or wiped because the source
+    // didn't exist). Source folder is taken from plan.source for the
+    // Browse-relative resolution; Apply / no-source flows have no
+    // source folder and only honour absolute paths.
+    nonisolated static func stageSplashIntoConfig(
+        plan: InstallPlan,
+        target: ApplyTarget,
+        bundle: URL,
+        newName: String
+    ) async throws {
+        let configURL = configURL(forName: newName, mode: plan.mode, bundle: bundle)
+        var config = try CiderConfig.read(from: configURL)
+        guard let raw = config.splash?.file, !raw.isEmpty else { return }
+
+        let sourceFolder: URL? = {
+            if case .folder(let url) = plan.source { return url }
+            return nil
+        }()
+
+        // SplashAssetStager throws on missing source / unsupported
+        // extension — let those propagate so the failure surfaces in
+        // the post-completion error path with the same banner UX as
+        // the rest of the orchestrator.
+        let staged = try SplashAssetStager.stage(
+            rawSplashPath: raw,
+            mode: plan.mode,
+            sourceFolder: sourceFolder,
+            bundleName: newName,
+            bundleURL: bundle
+        )
+        if staged != raw {
+            config.splash?.file = staged ?? ""
+            if staged == nil { config.splash = nil }
+            try config.write(to: configURL)
         }
     }
 

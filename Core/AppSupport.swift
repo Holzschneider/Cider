@@ -23,6 +23,20 @@ public enum AppSupport {
             .appendingPathComponent("Downloads", isDirectory: true)
     }
 
+    // Per-bundle scratch space for assets the orchestrator copies in
+    // for a configured app — the splash image goes here for Install
+    // mode (next to the cider.json in Configs/) so launching the
+    // configured bundle still finds the splash even if the user moves
+    // / deletes the source folder. Keyed by sanitised bundle name to
+    // match Configs/<name>.json.
+    public static var assets: URL {
+        root.appendingPathComponent("Assets", isDirectory: true)
+    }
+
+    public static func assets(forBundleNamed name: String) -> URL {
+        assets.appendingPathComponent(name, isDirectory: true)
+    }
+
     public static func prefix(forBundleNamed name: String) -> URL {
         prefixes.appendingPathComponent(name, isDirectory: true)
     }
