@@ -64,8 +64,19 @@ public struct WineLauncher {
             arguments = [winExePath] + plan.exeArgs
         }
 
+        // Build a per-launch wrapper .app bundle around the engine's
+        // wine binary so macOS reads OUR Info.plist when wine becomes
+        // the foreground process — menu-bar app slot now reads the
+        // configured Application Name instead of the .exe filename.
+        // Wine's @loader_path-relative dylib lookups still resolve in
+        // the engine cache (the wrapper is just a symlink).
+        let wrapper = try WineWrapperBundle.make(
+            displayName: plan.displayName,
+            engineWineBinary: plan.wineBinary
+        )
+
         let process = Process()
-        process.executableURL = plan.wineBinary
+        process.executableURL = wrapper.wineURL
         process.arguments = arguments
         process.environment = env
         process.currentDirectoryURL = workingDir
@@ -96,8 +107,8 @@ public struct WineLauncher {
         }
 
         try process.run()
-        Log.info("wine launched (pid \(process.processIdentifier))")
-        return Running(process: process, lineStream: stream, plan: plan)
+        Log.info("wine launched (pid \(process.processIdentifier)) via wrapper \(wrapper.bundleURL.lastPathComponent)")
+        return Running(process: process, lineStream: stream, plan: plan, wrapper: wrapper)
     }
 
     // MARK: - Lifecycle handle
@@ -106,11 +117,23 @@ public struct WineLauncher {
         public let process: Process
         public let lineStream: AsyncStream<String>
         let plan: Plan
+        // Per-launch wrapper bundle the wine binary was spawned
+        // through. Cleaned up when this Running drops out of scope.
+        let wrapper: WineWrapperBundle.Built
 
-        init(process: Process, lineStream: AsyncStream<String>, plan: Plan) {
+        init(process: Process, lineStream: AsyncStream<String>, plan: Plan,
+             wrapper: WineWrapperBundle.Built) {
             self.process = process
             self.lineStream = lineStream
             self.plan = plan
+            self.wrapper = wrapper
+        }
+
+        deinit {
+            // Best-effort cleanup. Survives if the process is still
+            // running — the symlink keeps wine's executable alive
+            // through its inode reference.
+            WineWrapperBundle.cleanup(wrapper)
         }
 
         // Waits for wine to exit and returns its exit status.
