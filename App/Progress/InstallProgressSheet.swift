@@ -118,6 +118,26 @@ final class InstallProgressModel: ObservableObject {
         guard completionState == .succeeded else { return }
         onCompletionChoice?(choice)
     }
+
+    // Defensive sweep called by the controller right before flipping
+    // completionState to .succeeded. The work() closure schedules
+    // phase events through `Task { @MainActor in model.apply(...) }`,
+    // and those tasks queue behind whatever's currently running on
+    // the main actor — so by the time `try await task.value` resumes,
+    // the trailing phaseDone events for the LAST phases of the run
+    // can still be in flight. Without this sweep, the user sees a
+    // post-completion button bar with one or two phases still
+    // showing as `.running` or `.pending`. Force them to `.done`.
+    func markAllPhasesDone() {
+        for idx in phases.indices {
+            switch phases[idx].state {
+            case .pending, .running:
+                phases[idx].state = .done
+            case .done, .skipped, .failed:
+                continue
+            }
+        }
+    }
 }
 
 struct InstallProgressSheet: View {

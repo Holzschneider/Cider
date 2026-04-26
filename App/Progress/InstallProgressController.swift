@@ -71,10 +71,14 @@ enum InstallProgressController {
 
         do {
             let value = try await task.value
-            // Work finished without throwing. Two paths:
-            //   1. caller wants the post-completion bar → flip the
-            //      sheet into "succeeded" state and wait for the user.
-            //   2. caller doesn't → dismiss + return immediately.
+            // Work finished without throwing. Sweep any phases still
+            // showing as .running / .pending to .done before flipping
+            // the bar — work() schedules phaseDone events via
+            // `Task { @MainActor in … }` and the trailing ones can
+            // arrive late, leaving the visual state inconsistent
+            // with "succeeded". This sweep makes the state coherent
+            // at the moment we flip.
+            model.markAllPhasesDone()
             if showsCompletionChoices {
                 model.completionState = .succeeded
                 let choice = await withCheckedContinuation { (cont: CheckedContinuation<InstallProgressModel.CompletionChoice, Never>) in
