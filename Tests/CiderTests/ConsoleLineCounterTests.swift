@@ -11,6 +11,29 @@ final class ConsoleLineCounterTests: XCTestCase {
         XCTAssertFalse(snap.settled)
     }
 
+    func testExplicitTargetOverridesBaseline() {
+        // Even with no baseline samples, an explicit target makes
+        // progress determinate immediately.
+        let counter = ConsoleLineCounter(baseline: .init(), explicitTarget: 10)
+        let snap = counter.record(lines: ["a", "b", "c", "d", "e"])
+        XCTAssertEqual(snap.progress, 0.5)
+    }
+
+    func testExplicitTargetWinsOverBaseline() {
+        // Baseline says 100 lines = 100%; explicit target says 10 lines.
+        // Explicit target wins.
+        let baseline = CiderRuntimeStats.LoadLineCount(rolling: 100, samples: 5)
+        let counter = ConsoleLineCounter(baseline: baseline, explicitTarget: 10)
+        let snap = counter.record(lines: Array(repeating: "x", count: 5))
+        XCTAssertEqual(snap.progress, 0.5)
+    }
+
+    func testExplicitTargetCapsAtOne() {
+        let counter = ConsoleLineCounter(baseline: .init(), explicitTarget: 4)
+        let snap = counter.record(lines: ["a", "b", "c", "d", "e", "f"])
+        XCTAssertEqual(snap.progress, 1.0)
+    }
+
     func testProgressNormalisesAgainstRolling() {
         var baseline = CiderRuntimeStats.LoadLineCount()
         baseline.record(100)

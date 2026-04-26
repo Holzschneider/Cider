@@ -16,6 +16,11 @@ public final class ConsoleLineCounter {
     }
 
     public let baseline: CiderRuntimeStats.LoadLineCount
+    // Optional explicit target — when set (cider.json's
+    // loading.expectedLineCount), it wins over the rolling baseline
+    // and lets the bar be determinate from the very first launch
+    // without waiting for a sample. nil falls back to baseline.
+    public let explicitTarget: Int?
     public let settleQuietSeconds: TimeInterval
     public let settleMinLines: Int      // don't settle before at least N lines
 
@@ -26,11 +31,13 @@ public final class ConsoleLineCounter {
 
     public init(
         baseline: CiderRuntimeStats.LoadLineCount,
+        explicitTarget: Int? = nil,
         settleQuietSeconds: TimeInterval = 3.0,
         settleMinLines: Int = 5,
         clock: @escaping () -> Date = Date.init
     ) {
         self.baseline = baseline
+        self.explicitTarget = explicitTarget
         self.settleQuietSeconds = settleQuietSeconds
         self.settleMinLines = settleMinLines
         self.clock = clock
@@ -61,8 +68,15 @@ public final class ConsoleLineCounter {
     public func snapshot() -> Snapshot {
         Snapshot(
             lineCount: count,
-            progress: baseline.progress(forCurrent: count),
+            progress: progressForCurrent(),
             settled: settledFlag
         )
+    }
+
+    private func progressForCurrent() -> Double? {
+        if let explicitTarget, explicitTarget > 0 {
+            return min(1.0, Double(count) / Double(explicitTarget))
+        }
+        return baseline.progress(forCurrent: count)
     }
 }

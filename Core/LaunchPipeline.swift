@@ -12,6 +12,22 @@ public final class LaunchPipeline {
     public typealias SettleCallback = @Sendable () -> Void
     public typealias ErrorCallback = @Sendable (Swift.Error) -> Void
 
+    // Sendable bridge to the SwiftUI LoadingProgressModel that lives
+    // in the app target. Lets Core push raw wine-stdout lines and
+    // determinate progress straight at the loading window without
+    // depending on AppKit/SwiftUI types.
+    public struct LoadingBridge: Sendable {
+        public let setLine: @Sendable (String) -> Void
+        public let setProgress: @Sendable (Double?) -> Void
+        public init(
+            setLine: @escaping @Sendable (String) -> Void,
+            setProgress: @escaping @Sendable (Double?) -> Void
+        ) {
+            self.setLine = setLine
+            self.setProgress = setProgress
+        }
+    }
+
     public let config: CiderConfig
     public let configFileURL: URL          // location the cider.json was loaded from
     public let bundleURL: URL
@@ -20,6 +36,7 @@ public final class LaunchPipeline {
     private let progress: ProgressCallback
     private let settle: SettleCallback
     private let onError: ErrorCallback
+    private let loading: LoadingBridge?
 
     public init(
         config: CiderConfig,
@@ -28,7 +45,8 @@ public final class LaunchPipeline {
         bundleName: String,
         progress: @escaping ProgressCallback,
         settle: @escaping SettleCallback,
-        onError: @escaping ErrorCallback
+        onError: @escaping ErrorCallback,
+        loading: LoadingBridge? = nil
     ) {
         self.config = config
         self.configFileURL = configFileURL
@@ -37,6 +55,7 @@ public final class LaunchPipeline {
         self.progress = progress
         self.settle = settle
         self.onError = onError
+        self.loading = loading
     }
 
     // Returns wine's exit code. Throws on any pre-launch failure (engine
@@ -142,32 +161,69 @@ public final class LaunchPipeline {
         )
         _ = winExePath
         progress("Launching", config.displayName, nil)
+        // For .logFile loading source: wipe any pre-existing file so
+        // we don't read stale lines from a previous session as if
+        // they were live.
+        let loadingConfig = config.loading ?? .default
+        let logFileURL = resolvedLogFileURL(loadingConfig: loadingConfig,
+                                            applicationDir: applicationDir)
+        if loadingConfig.source == .logFile, let logFileURL {
+            LogFileTailer.resetFile(at: logFileURL)
+        }
         let running = try WineLauncher(plan: plan).launch()
 
-        // 9. Pump stdout/err through the line counter, drive splash overlay.
-        let counter = ConsoleLineCounter(baseline: stats.loadLineCount)
+        // 9. Pump lines from the configured source through the
+        //    line counter, drive splash overlay + loading window.
+        let counter = ConsoleLineCounter(
+            baseline: stats.loadLineCount,
+            explicitTarget: loadingConfig.expectedLineCount
+        )
         let counterRef = ConsoleLineCounterBox(counter: counter)
-        let lineTask = Task { [progress, counterRef] in
+        let lineSource: AsyncStream<String>
+        if loadingConfig.source == .logFile, let logFileURL {
+            lineSource = LogFileTailer(url: logFileURL).lines()
+        } else {
+            lineSource = running.lineStream
+        }
+        let loadingBridge = self.loading
+        let lineTask = Task { [progress, counterRef, loadingBridge] in
             var batch: [String] = []
-            for await line in running.lineStream {
+            for await line in lineSource {
                 batch.append(line)
+                // Push the latest raw line straight to the loading
+                // window's status row. Doing it per-line keeps the
+                // status reactive even when batches haven't flushed.
+                loadingBridge?.setLine(line)
                 if batch.count >= 8 {
                     let snap = counterRef.record(batch)
                     batch.removeAll(keepingCapacity: true)
                     progress("Loading", "\(snap.lineCount) lines", snap.progress)
+                    loadingBridge?.setProgress(snap.progress)
                 }
             }
             if !batch.isEmpty {
-                _ = counterRef.record(batch)
+                let snap = counterRef.record(batch)
+                loadingBridge?.setProgress(snap.progress)
             }
         }
         // Periodic ticker for settle detection. Hides the overlay (via the
         // settle callback) once line rate has dropped — Phase 5's
-        // ConsoleLineCounter handles the timing.
-        let settleTask = Task { [counterRef, settle] in
+        // ConsoleLineCounter handles the timing. Also enforces the
+        // explicit autoHideOnTarget rule from cider.json.
+        let settleTask = Task { [counterRef, settle, loadingBridge] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 let snap = counterRef.tick()
+                if let progress = snap.progress {
+                    loadingBridge?.setProgress(progress)
+                }
+                if loadingConfig.autoHideOnTarget,
+                   let target = loadingConfig.expectedLineCount,
+                   target > 0,
+                   snap.lineCount >= target {
+                    settle()
+                    return
+                }
                 if snap.settled {
                     settle()
                     return
@@ -204,6 +260,24 @@ public final class LaunchPipeline {
             detail = String(format: "%.1f MB", mb)
         }
         progress(title, detail, fraction)
+    }
+
+    // Resolves cider.json's loading.logFilePath against the
+    // application directory (relative paths) or as-is (absolute / ~).
+    // Returns nil when the path is unset / blank — caller treats that
+    // the same as "log file source disabled".
+    private func resolvedLogFileURL(loadingConfig: CiderConfig.Loading,
+                                    applicationDir: URL) -> URL? {
+        guard loadingConfig.source == .logFile,
+              let raw = loadingConfig.logFilePath?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty
+        else { return nil }
+        let expanded = (raw as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded)
+        }
+        return applicationDir.appendingPathComponent(expanded)
     }
 
     // The prefix this config should run in. cider.json's `prefixPath`

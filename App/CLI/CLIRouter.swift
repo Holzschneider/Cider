@@ -169,6 +169,20 @@ enum GUIEntry {
         bundleName: String,
         splash: SplashController?
     ) {
+        // Bridge from Core's Sendable LoadingBridge to the SwiftUI
+        // LoadingProgressModel on the main actor. Pushes raw wine
+        // stdout / log-file lines straight at the loading window's
+        // status row.
+        let loadingBridge: LaunchPipeline.LoadingBridge? = splash.map { ctrl in
+            LaunchPipeline.LoadingBridge(
+                setLine: { line in
+                    Task { @MainActor in ctrl.loadingProgress.ingestLine(line) }
+                },
+                setProgress: { fraction in
+                    Task { @MainActor in ctrl.loadingProgress.fraction = fraction }
+                }
+            )
+        }
         let pipeline = LaunchPipeline(
             config: config,
             configFileURL: configFileURL,
@@ -185,6 +199,7 @@ enum GUIEntry {
             settle: {
                 Task { @MainActor in
                     splash?.progress.hide()
+                    splash?.requestClose()
                 }
             },
             onError: { error in
@@ -197,7 +212,8 @@ enum GUIEntry {
                     alert.runModal()
                     NSApplication.shared.terminate(nil)
                 }
-            }
+            },
+            loading: loadingBridge
         )
 
         Task.detached {
