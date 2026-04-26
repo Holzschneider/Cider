@@ -45,6 +45,7 @@ public struct CiderConfig: Codable, Equatable {
     public var graphics: GraphicsDriverKind
     public var wine: WineOptions
     public var splash: Splash?
+    public var loading: Loading?
     public var icon: String?
     public var originURL: String?
     public var distributionURL: String?
@@ -61,6 +62,7 @@ public struct CiderConfig: Codable, Equatable {
         graphics: GraphicsDriverKind,
         wine: WineOptions = .default,
         splash: Splash? = nil,
+        loading: Loading? = nil,
         icon: String? = nil,
         originURL: String? = nil,
         distributionURL: String? = nil,
@@ -76,6 +78,7 @@ public struct CiderConfig: Codable, Equatable {
         self.graphics = graphics
         self.wine = wine
         self.splash = splash
+        self.loading = loading
         self.icon = icon
         self.originURL = originURL
         self.distributionURL = distributionURL
@@ -140,12 +143,62 @@ public struct CiderConfig: Codable, Equatable {
 
     public struct Splash: Codable, Equatable {
         public var file: String
+        // Legacy field kept for back-compat with v2 cider.json files
+        // (v3 SplashWindow is a centered framed image and ignores this).
+        // Defaults to true so existing configs round-trip unchanged.
         public var transparent: Bool
 
         public init(file: String, transparent: Bool = true) {
             self.file = file
             self.transparent = transparent
         }
+    }
+
+    public struct Loading: Codable, Equatable {
+        public enum Source: String, Codable, CaseIterable {
+            // Tail wine + the launched app's combined stdout/stderr.
+            case terminal
+            // Tail a text file the application writes to. Cider deletes
+            // the file before launch and watches it for new lines.
+            case logFile
+        }
+
+        // Whether the loading window should appear at all. When false
+        // the splash image (if any) is the only loading-time UI.
+        public var enabled: Bool
+        public var source: Source
+        // Path to the log file when source == .logFile. Resolved
+        // against the application directory (relative) or used as-is
+        // (absolute / ~-expanded). Ignored when source == .terminal.
+        public var logFilePath: String?
+        // Explicit line-count target — overrides the rolling-average
+        // from RuntimeStats. Lets a distributor pin exactly how many
+        // lines the app will emit before its main window opens, so
+        // the bar is determinate from the first launch. nil means
+        // "use whatever RuntimeStats has measured".
+        public var expectedLineCount: Int?
+        // Only meaningful when expectedLineCount is set. Auto-dismiss
+        // the loading window when the count is reached, instead of
+        // waiting for the wine app's first window to take focus.
+        // For .terminal: hides on app launch (line-count threshold);
+        // for .logFile: hides when the log fills.
+        public var autoHideOnTarget: Bool
+
+        public init(
+            enabled: Bool = true,
+            source: Source = .terminal,
+            logFilePath: String? = nil,
+            expectedLineCount: Int? = nil,
+            autoHideOnTarget: Bool = false
+        ) {
+            self.enabled = enabled
+            self.source = source
+            self.logFilePath = logFilePath
+            self.expectedLineCount = expectedLineCount
+            self.autoHideOnTarget = autoHideOnTarget
+        }
+
+        public static let `default` = Loading()
     }
 }
 
