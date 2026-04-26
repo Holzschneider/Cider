@@ -96,18 +96,26 @@ final class DropZoneViewModel: ObservableObject {
 
         if isDir.boolValue {
             dropped = .folder(url)
-            // Auto-detect cider.json inside the folder.
-            let candidate = url.appendingPathComponent("cider.json")
-            if fm.fileExists(atPath: candidate.path) {
-                if tryLoadConfig(from: candidate,
-                                 label: "from \(url.lastPathComponent)/cider.json") {
+            // Auto-detect cider.json in this priority order:
+            //   1. AppSupport/Configs/<sanitised-folder-name>.json —
+            //      lets a previously-saved config flow back in even if
+            //      the user never saved a copy alongside the source.
+            //   2. <dropped>/cider.json — distributor-shipped config
+            //      living inside the source tree.
+            // Either parse → set loadedConfig + synthesise installPlan
+            // so Create / Apply work without a Configure round-trip.
+            for probe in autoLoadProbes(for: url) {
+                guard fm.fileExists(atPath: probe.url.path) else { continue }
+                if tryLoadConfig(from: probe.url, label: probe.label) {
+                    if let cfg = loadedConfig {
+                        installPlan = Self.synthesisePlan(
+                            from: cfg, droppedFolder: url)
+                    }
                     return
                 }
-                // Parse failed — drop into "configure from scratch".
-                statusMessage = "Folder's cider.json isn't a valid Cider v2 config — click Configure to set it up."
-            } else {
-                statusMessage = "Folder has no cider.json — click Configure to set it up."
+                // Parse failed for this candidate — keep probing.
             }
+            statusMessage = "No matching Cider configuration found — click Configure to set it up."
             loadedConfig = nil
             return
         }
@@ -156,6 +164,45 @@ final class DropZoneViewModel: ObservableObject {
                 statusMessage = "Could not resolve URL: \(error)"
             }
         }
+    }
+
+    // Two-stage probe: AppSupport-by-folder-name first, then the
+    // dropped folder's own cider.json. Order is load-bearing — a user
+    // who renamed their source dir but kept the AppSupport config
+    // should pick up the saved config rather than nothing.
+    struct AutoLoadProbe {
+        let url: URL
+        let label: String
+    }
+
+    private func autoLoadProbes(for folder: URL) -> [AutoLoadProbe] {
+        let bundleName = BundleTransmogrifier.sanitiseBundleName(
+            folder.lastPathComponent)
+        var probes: [AutoLoadProbe] = []
+        if !bundleName.isEmpty {
+            probes.append(AutoLoadProbe(
+                url: AppSupport.config(forBundleNamed: bundleName),
+                label: "Loaded \(bundleName) from Application Support."
+            ))
+        }
+        probes.append(AutoLoadProbe(
+            url: folder.appendingPathComponent("cider.json"),
+            label: "Loaded cider.json from \(folder.lastPathComponent)/."
+        ))
+        return probes
+    }
+
+    // Build an InstallPlan from an auto-loaded config so the Create /
+    // Apply buttons can fire directly (no Configure round-trip
+    // needed). Mode is inferred from applicationPath the same way
+    // MoreDialogViewModel does; source is the dropped folder itself.
+    static func synthesisePlan(from config: CiderConfig,
+                               droppedFolder: URL) -> InstallPlan {
+        InstallPlan(
+            config: config,
+            mode: MoreDialogViewModel.inferMode(from: config.applicationPath),
+            source: .folder(droppedFolder)
+        )
     }
 
     // Returns true on a clean v2-schema parse (loadedConfig + status set);

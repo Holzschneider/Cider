@@ -431,13 +431,15 @@ final class MoreDialogViewModel: ObservableObject {
 
     // MARK: - Helpers
 
-    // Absolute-looking path → Link; "Application" or "Application/..." →
-    // Bundle; anything else relative → Install. Empty → Install (default).
+    // Absolute-looking path → Link; in-bundle paths (schema-v2's
+    // "Application[/…]" or schema-v3's "System/…") → Bundle; anything
+    // else relative → Install. Empty → Install (default).
     static func inferMode(from applicationPath: String) -> InstallMode {
         let p = applicationPath.trimmingCharacters(in: .whitespaces)
         if p.isEmpty { return .install }
         if p.hasPrefix("/") || p.hasPrefix("~") { return .link }
         if p == "Application" || p.hasPrefix("Application/") { return .bundle }
+        if p == "System" || p.hasPrefix("System/") { return .bundle }
         return .install
     }
 
