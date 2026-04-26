@@ -16,8 +16,8 @@ final class InstallProgressModelTests: XCTestCase {
         XCTAssertEqual(m.phases[0].id, "a")
         XCTAssertEqual(m.phases[0].label, "Step A")
         XCTAssertEqual(m.phases[0].state, .pending)
-        XCTAssertEqual(m.phases[1].state, .done,
-                       "alreadyDone descriptors start ticked-off")
+        XCTAssertEqual(m.phases[1].state, .skipped,
+                       "alreadyDone descriptors render as skipped (text-only, dim)")
     }
 
     func testPhaseStartProgressDoneTransitions() {

@@ -14,6 +14,12 @@ final class InstallProgressModel: ObservableObject {
         case pending
         case running(fraction: Double?, detail: String)
         case done
+        // Marks phases that were already complete before this Create
+        // run kicked off (engine cached, template extracted, prefix
+        // initialised). Rendered as a dim text-only row — no glyph,
+        // much darker text — to make it clear nothing actually
+        // happened for them this time.
+        case skipped
         case failed(message: String)
     }
 
@@ -78,7 +84,7 @@ final class InstallProgressModel: ObservableObject {
         case .phasesDeclared(let descriptors):
             phases = descriptors.map { d in
                 Phase(id: d.id, label: d.label, kind: d.kind,
-                      state: d.alreadyDone ? .done : .pending)
+                      state: d.alreadyDone ? .skipped : .pending)
             }
 
         case .phaseStarted(let id):
@@ -257,6 +263,11 @@ struct InstallProgressSheet: View {
         case .failed:
             Image(systemName: "xmark.circle.fill")
                 .foregroundStyle(.red)
+        case .skipped:
+            // No glyph — the row is intentionally text-only and
+            // dimmed. The 16×16 frame in phaseRow keeps the rest of
+            // the column aligned with the gloth-bearing rows.
+            EmptyView()
         }
     }
 
@@ -281,6 +292,7 @@ struct InstallProgressSheet: View {
         switch state {
         case .pending: return .secondary
         case .failed:  return .red
+        case .skipped: return Color.primary.opacity(0.30)
         default:       return .primary
         }
     }
