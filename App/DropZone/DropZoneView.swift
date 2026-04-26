@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
+import CiderModels
 
 struct DropZoneView: View {
     @ObservedObject var vm: DropZoneViewModel
@@ -138,21 +140,16 @@ struct DropZoneView: View {
 
     private func droppedContent(url: URL) -> some View {
         ZStack(alignment: .topTrailing) {
-            VStack(spacing: 10) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 64, height: 64)
-                Text(url.lastPathComponent)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text("Double-click to clear")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .opacity(sourceHovering ? 1 : 0)
+            // Two-column when a config is loaded (saved or auto-
+            // detected), single-column otherwise. Both states share
+            // the same outer chrome (clear-on-double-click, ✕ on
+            // hover).
+            Group {
+                if let cfg = vm.loadedConfig {
+                    configuredContent(url: url, config: cfg)
+                } else {
+                    bareContent(url: url)
+                }
             }
             .padding(20)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -175,6 +172,92 @@ struct DropZoneView: View {
             }
         }
         .animation(.easeInOut(duration: 0.12), value: sourceHovering)
+    }
+
+    // MARK: - Dropped-state layouts
+
+    private func bareContent(url: URL) -> some View {
+        VStack(spacing: 10) {
+            droppedIcon(url: url, customIconURL: nil)
+                .frame(width: 64, height: 64)
+            Text(url.lastPathComponent)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text("Double-click to clear")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .opacity(sourceHovering ? 1 : 0)
+        }
+    }
+
+    private func configuredContent(url: URL, config: CiderConfig) -> some View {
+        let iconURL = resolveCustomIconURL(config: config, droppedFolder: url)
+        let summary = ConfigSummary.summary(for: config)
+        return HStack(alignment: .top, spacing: 16) {
+            VStack(spacing: 8) {
+                droppedIcon(url: url, customIconURL: iconURL)
+                    .frame(width: 64, height: 64)
+                Text(url.lastPathComponent)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 120)
+            }
+            .frame(width: 120)
+
+            Rectangle()
+                .fill(Color.secondary.opacity(0.25))
+                .frame(width: 0.5)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(summary.heading)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                ForEach(Array(summary.lines.enumerated()), id: \.offset) { _, line in
+                    Text(line)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func droppedIcon(url: URL, customIconURL: URL?) -> some View {
+        if let customIconURL,
+           FileManager.default.fileExists(atPath: customIconURL.path),
+           let img = NSImage(contentsOf: customIconURL) {
+            Image(nsImage: img)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+        } else {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+        }
+    }
+
+    // Resolves cider.json's optional `icon` field (relative or
+    // absolute) against the dropped folder. Mirrors
+    // MoreDialogViewModel.resolvedIconURL but without needing the
+    // form context — the drop zone always knows the source folder.
+    private func resolveCustomIconURL(config: CiderConfig, droppedFolder: URL) -> URL? {
+        guard let raw = config.icon, !raw.isEmpty else { return nil }
+        let expanded = (raw as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded)
+        }
+        return droppedFolder.appendingPathComponent(expanded)
     }
 }
 
