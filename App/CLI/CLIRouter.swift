@@ -183,6 +183,18 @@ enum GUIEntry {
                 }
             )
         }
+
+        // Wire the loading window's (X) Cancel hook to SIGTERM the
+        // wine process. If wine is still alive after 5s grace, alert
+        // the user with a Force Kill (-9) / OK choice.
+        let cancelHandle = LaunchPipeline.CancelHandle()
+        if let splash {
+            splash.loadingProgress.onCancel = { [weak splash] in
+                Task { @MainActor in
+                    handleLoadingCancel(splash: splash, handle: cancelHandle)
+                }
+            }
+        }
         let pipeline = LaunchPipeline(
             config: config,
             configFileURL: configFileURL,
@@ -213,7 +225,8 @@ enum GUIEntry {
                     NSApplication.shared.terminate(nil)
                 }
             },
-            loading: loadingBridge
+            loading: loadingBridge,
+            cancelHandle: cancelHandle
         )
 
         Task.detached {
@@ -294,6 +307,42 @@ enum GUIEntry {
             case .cancelled:
                 NSApplication.shared.terminate(nil)
             }
+        }
+    }
+
+    // SIGTERM the wine process; after 5 s grace, if still alive,
+    // pop a "Can't be killed" alert with Force Kill (-9) / OK.
+    @MainActor
+    private static func handleLoadingCancel(
+        splash: SplashController?,
+        handle: LaunchPipeline.CancelHandle
+    ) {
+        guard handle.sigterm() else {
+            // Process never started, or already exited — just close
+            // the loading window.
+            splash?.requestClose()
+            return
+        }
+        // Check after 5 s. The wait is non-blocking — UI stays
+        // responsive; the (X) hover button is already disabled.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if !handle.isAlive {
+                splash?.requestClose()
+                return
+            }
+            let alert = NSAlert()
+            alert.messageText = "Application can't be killed"
+            alert.informativeText = "wine didn't respond to SIGTERM after 5 seconds. You can force-kill it (SIGKILL / -9), which may leave the prefix in an inconsistent state, or wait longer."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Force kill (-9)")
+            alert.addButton(withTitle: "OK")
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                handle.sigkill()
+                splash?.requestClose()
+            }
+            // OK → leave it alone; the user can wait or hit Cmd-Q.
         }
     }
 

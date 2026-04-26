@@ -28,6 +28,44 @@ public final class LaunchPipeline {
         }
     }
 
+    // Thread-safe holder for the running wine Process so the loading
+    // window's (X) hover button can SIGTERM it after launch. The
+    // handle is created up front by the caller; the pipeline
+    // .install()s the wine Process into it as soon as WineLauncher
+    // hands one back.
+    public final class CancelHandle: @unchecked Sendable {
+        private let lock = NSLock()
+        private var process: Process?
+        public init() {}
+
+        public func install(_ p: Process) {
+            lock.lock(); defer { lock.unlock() }
+            process = p
+        }
+
+        // Sends SIGTERM. Returns true if a process was alive to
+        // signal. The caller decides whether to follow up with
+        // SIGKILL after a grace period (~5 s).
+        @discardableResult
+        public func sigterm() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard let p = process, p.isRunning else { return false }
+            p.terminate()
+            return true
+        }
+
+        public func sigkill() {
+            lock.lock(); defer { lock.unlock() }
+            guard let p = process, p.isRunning else { return }
+            kill(p.processIdentifier, SIGKILL)
+        }
+
+        public var isAlive: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return process?.isRunning ?? false
+        }
+    }
+
     public let config: CiderConfig
     public let configFileURL: URL          // location the cider.json was loaded from
     public let bundleURL: URL
@@ -37,6 +75,7 @@ public final class LaunchPipeline {
     private let settle: SettleCallback
     private let onError: ErrorCallback
     private let loading: LoadingBridge?
+    private let cancelHandle: CancelHandle?
 
     public init(
         config: CiderConfig,
@@ -46,7 +85,8 @@ public final class LaunchPipeline {
         progress: @escaping ProgressCallback,
         settle: @escaping SettleCallback,
         onError: @escaping ErrorCallback,
-        loading: LoadingBridge? = nil
+        loading: LoadingBridge? = nil,
+        cancelHandle: CancelHandle? = nil
     ) {
         self.config = config
         self.configFileURL = configFileURL
@@ -56,6 +96,7 @@ public final class LaunchPipeline {
         self.settle = settle
         self.onError = onError
         self.loading = loading
+        self.cancelHandle = cancelHandle
     }
 
     // Returns wine's exit code. Throws on any pre-launch failure (engine
@@ -171,6 +212,7 @@ public final class LaunchPipeline {
             LogFileTailer.resetFile(at: logFileURL)
         }
         let running = try WineLauncher(plan: plan).launch()
+        cancelHandle?.install(running.process)
 
         // 9. Pump lines from the configured source through the
         //    line counter, drive splash overlay + loading window.
