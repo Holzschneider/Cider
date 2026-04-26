@@ -82,7 +82,7 @@ struct MoreDialogView: View {
             }
             row("Executable", error: vm.exeError) {
                 HStack(spacing: 8) {
-                    TextField("RagnarokPlus/ragnarok-plus-patcher.exe", text: $vm.exe)
+                    TextField("Game.exe", text: $vm.exe)
                         .textFieldStyle(DialogTextFieldStyle(monospaced: true))
                     if let source = vm.sourceForBrowsing {
                         Button("Browse…") { browseForExecutable(in: source) }
@@ -91,7 +91,7 @@ struct MoreDialogView: View {
                 }
             }
             row("Command-line args") {
-                TextField("/tui /log", text: $vm.argsText)
+                TextField("/option /switch", text: $vm.argsText)
                     .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
         }
@@ -295,7 +295,7 @@ struct MoreDialogView: View {
             }
 
             row("Winetricks verbs", help: "Space-separated. Installed once on first launch.") {
-                TextField("corefonts d3dx9 vcrun2019", text: $vm.winetricksText)
+                TextField("corefonts vcrun2019", text: $vm.winetricksText)
                     .textFieldStyle(DialogTextFieldStyle(monospaced: true))
             }
         }
@@ -316,11 +316,8 @@ struct MoreDialogView: View {
             }
             row("App icon",
                 help: "PNG / JPEG / Windows .ico / .icns. Picking a file inside the source folder writes a relative path; anything outside writes an absolute path.") {
-                VStack(alignment: .leading, spacing: 8) {
-                    iconPathPicker(text: $vm.iconFile,
-                                   placeholder: "icon.png, icon.ico, or icon.icns")
-                    iconPreview()
-                }
+                iconPathPicker(text: $vm.iconFile,
+                               placeholder: "icon.png, icon.ico, or icon.icns")
             }
         }
     }
@@ -333,27 +330,6 @@ struct MoreDialogView: View {
                 chooseIcon(into: text)
             }
             .buttonStyle(.bordered)
-        }
-    }
-
-    @ViewBuilder
-    private func iconPreview() -> some View {
-        if let url = vm.resolvedIconURL,
-           FileManager.default.fileExists(atPath: url.path),
-           let image = NSImage(contentsOf: url) {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 128, height: 128)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.black.opacity(0.18))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(DialogTheme.fieldBorder, lineWidth: 0.5)
-                )
         }
     }
 
