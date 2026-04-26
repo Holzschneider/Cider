@@ -88,6 +88,11 @@ enum GUIEntry {
                 }
             }
             controller?.onDoubleClick = openConfigure
+            // The menu-injector dylib running inside wine posts a
+            // distributed notification when the user clicks
+            // "Settings…" — listen for our own PID's events and
+            // route through the same openConfigure path.
+            installMenuInjectorObserver(handler: openConfigure)
             shell.run(appName: cfg.displayName, onSettings: openConfigure) { _ in
                 controller?.attach()
                 runLaunchPipeline(
@@ -308,6 +313,34 @@ enum GUIEntry {
                 NSApplication.shared.terminate(nil)
             }
         }
+    }
+
+    // Per-process slot for the distributed-notification observer so
+    // Cider doesn't accumulate handlers across re-entry.
+    @MainActor
+    private static var menuInjectorObserver: NSObjectProtocol?
+
+    // Listens for the menu-injector dylib's "show settings" click
+    // notification posted from inside wine. Filters on parentPID so
+    // multiple Cider instances each only handle their own children's
+    // clicks. Calls `handler` on the main actor.
+    @MainActor
+    private static func installMenuInjectorObserver(handler: @escaping () -> Void) {
+        if let prev = menuInjectorObserver {
+            DistributedNotificationCenter.default()
+                .removeObserver(prev)
+        }
+        let myPID = String(getpid())
+        menuInjectorObserver = DistributedNotificationCenter.default()
+            .addObserver(
+                forName: Notification.Name("app.cider.menu.showSettings"),
+                object: nil,
+                queue: .main
+            ) { note in
+                let posterPID = (note.userInfo?["parentPID"] as? String) ?? ""
+                guard posterPID == myPID else { return }
+                handler()
+            }
     }
 
     // SIGTERM the wine process; after 5 s grace, if still alive,

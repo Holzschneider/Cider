@@ -226,7 +226,35 @@ public struct WineLauncher {
         // Graphics-driver extras (DXVK_HUD, MTL_HUD_ENABLED, …).
         for (k, v) in plan.graphicsExtraEnv { env[k] = v }
 
+        // Inject the menu-injector dylib that adds Settings… into
+        // wine's app menu. Only effective when the wine binary is
+        // entitled with allow-dyld-environment-variables AND
+        // disable-library-validation (Sikarugir / CrossOver / Whisky
+        // engines all are). Failure is silent — the menu just lacks
+        // the extra item; wine still runs.
+        if let injector = injectorDylibURL() {
+            let existing = env["DYLD_INSERT_LIBRARIES"]
+            env["DYLD_INSERT_LIBRARIES"] = existing.map { "\($0):\(injector.path)" }
+                ?? injector.path
+            env["CIDER_PARENT_PID"] = String(getpid())
+            env["CIDER_MENU_NOTIFICATION"] = "app.cider.menu.showSettings"
+        }
+
         return env
+    }
+
+    // Looks up the injector dylib bundled at
+    //   Cider.app/Contents/MacOS/CiderMenuInjector.dylib
+    // — same directory as the cider binary. Returns nil for headless
+    // / dev-time runs where the binary isn't running from inside an
+    // .app bundle.
+    private func injectorDylibURL() -> URL? {
+        let exe = URL(fileURLWithPath: CommandLine.arguments[0])
+            .resolvingSymlinksInPath()
+        let candidate = exe.deletingLastPathComponent()
+            .appendingPathComponent("CiderMenuInjector.dylib")
+        return FileManager.default.fileExists(atPath: candidate.path)
+            ? candidate : nil
     }
 
     // Same bat shape as BundleBuilder.writeRunBat in the old CLI, ported

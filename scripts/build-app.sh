@@ -27,6 +27,21 @@ rm -rf "$OUTPUT"
 mkdir -p "$OUTPUT/Contents/MacOS" "$OUTPUT/Contents/Resources"
 cp "$BIN" "$OUTPUT/Contents/MacOS/cider"
 
+# Compile the menu-injector dylib that wine loads via DYLD_INSERT_LIBRARIES
+# so wine's app menu gains a Settings… item linked back to Cider. Built
+# universal so it loads into both arm64 and x86_64 wine engines. Embedded
+# under Contents/MacOS/ so it's covered by Cider's codesign seal.
+INJECTOR_SRC="$ROOT/Resources/CiderMenuInjector/CiderMenuInjector.m"
+INJECTOR_OUT="$OUTPUT/Contents/MacOS/CiderMenuInjector.dylib"
+echo "→ compiling CiderMenuInjector.dylib (universal)"
+clang -dynamiclib -fobjc-arc \
+    -framework AppKit -framework Foundation \
+    -mmacosx-version-min=12.0 \
+    -arch arm64 -arch x86_64 \
+    -install_name "@rpath/CiderMenuInjector.dylib" \
+    "$INJECTOR_SRC" \
+    -o "$INJECTOR_OUT"
+
 # Bundle the default icon, if present.
 if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
     cp "$ROOT/Resources/AppIcon.icns" "$OUTPUT/Contents/Resources/AppIcon.icns"
@@ -65,6 +80,15 @@ PLIST
 # re-signs with a Developer ID identity and submits to notarytool.
 ENTITLEMENTS="$ROOT/Resources/Cider.entitlements"
 echo "→ codesign --sign - (ad-hoc) with entitlements"
+# Sign the injector dylib FIRST — codesigning the cider binary
+# verifies all sibling Mach-Os in Contents/MacOS/ as part of its
+# bundle-relative seal, so unsigned siblings break it.
+# (No entitlements — dylibs inherit the host process's; just
+# hardened-runtime so notarisation still passes.)
+codesign --force --sign - \
+    --options runtime \
+    "$OUTPUT/Contents/MacOS/CiderMenuInjector.dylib"
+
 codesign --force --sign - \
     --options runtime \
     --entitlements "$ENTITLEMENTS" \
