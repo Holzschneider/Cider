@@ -82,7 +82,7 @@ struct MoreDialogView: View {
             }
             row("Executable", error: vm.exeError) {
                 HStack(spacing: 8) {
-                    TextField("Game.exe", text: $vm.exe)
+                    TextField("Application.exe", text: $vm.exe)
                         .textFieldStyle(DialogTextFieldStyle(monospaced: true))
                     if let source = vm.sourceForBrowsing {
                         Button("Browse…") { browseForExecutable(in: source) }
