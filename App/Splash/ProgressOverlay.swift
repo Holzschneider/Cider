@@ -13,6 +13,12 @@ public final class ProgressModel: ObservableObject {
     // nil → indeterminate spinner; 0…1 → determinate bar.
     @Published public var fraction: Double? = nil
 
+    // Forward-and-flatten hook used by SplashController so the new
+    // schema-v3 LoadingWindow can show the same engine-download /
+    // prefix-init progress lines that LaunchPipeline still pushes
+    // through the legacy ProgressModel.
+    public var onChange: ((_ title: String, _ detail: String, _ fraction: Double?) -> Void)?
+
     public init() {}
 
     public func show(title: String, detail: String = "", fraction: Double? = nil) {
@@ -20,11 +26,13 @@ public final class ProgressModel: ObservableObject {
         self.detail = detail
         self.fraction = fraction
         self.visible = true
+        onChange?(title, detail, fraction)
     }
 
     public func update(detail: String? = nil, fraction: Double? = nil) {
         if let detail { self.detail = detail }
         self.fraction = fraction
+        onChange?(self.title, self.detail, self.fraction)
     }
 
     public func hide() {

@@ -60,7 +60,7 @@ enum GUIEntry {
 
             let controller = SplashController.load(
                 splashFile: splashURL,
-                transparentHint: cfg.splash?.transparent ?? false
+                showLoadingWindow: cfg.loading?.enabled ?? true
             )
             // Both the splash double-click and the menu's Settings…
             // entry route through the same MoreDialog reconfig path.
@@ -598,11 +598,10 @@ extension Cider {
         func run() throws {
             let url = URL(fileURLWithPath: image)
             let withProgress = self.withProgress
-            let transparent = self.transparent
             try MainActor.assumeIsolated {
                 guard let controller = SplashController.load(
                     splashFile: url,
-                    transparentHint: transparent
+                    showLoadingWindow: withProgress
                 ) else {
                     FileHandle.standardError.write(Data(
                         "preview-splash: could not load image at \(url.path)\n".utf8))
