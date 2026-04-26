@@ -303,17 +303,59 @@ struct MoreDialogView: View {
 
     private var presentationSection: some View {
         section("Presentation") {
-            row("Splash image") {
-                pathPicker(text: $vm.splashFile,
-                           placeholder: "splash.png",
-                           filter: .image)
-            }
-            row(" ") {
-                Toggle(isOn: $vm.splashTransparent) {
-                    toggleLabel("Splash has alpha", muted: " (PNG, borderless transparent)")
+            // Loading window — sits above Splash screen, drives the
+            // translucent progress UI shown while wine is starting.
+            row("Loading window") {
+                Toggle(isOn: $vm.loadingEnabled) {
+                    toggleLabel("Show", muted: " — translucent window with progress bar + status line")
                 }
                 .toggleStyle(.checkbox)
             }
+            if vm.loadingEnabled {
+                row("Status source",
+                    help: "Where the bar's status line + line counts come from. The terminal is wine's combined stdout/stderr; the log file is whatever your application writes to.") {
+                    Picker("", selection: $vm.loadingSource) {
+                        Text("Terminal").tag(CiderConfig.Loading.Source.terminal)
+                        Text("Log file").tag(CiderConfig.Loading.Source.logFile)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+                if vm.loadingSource == .logFile {
+                    row("Log file path",
+                        help: "Cider deletes this file before launch and tails it for new lines. Relative paths resolve against the application directory.") {
+                        TextField("logs/startup.log", text: $vm.loadingLogFilePath)
+                            .textFieldStyle(DialogTextFieldStyle(monospaced: true))
+                    }
+                }
+                row("Expected line count",
+                    help: "Optional — pin the bar's 100% mark explicitly so it's determinate from the first launch. Leave empty to use the rolling average across previous launches.") {
+                    TextField("e.g. 1200", text: $vm.loadingExpectedLineCountText)
+                        .textFieldStyle(DialogTextFieldStyle(monospaced: true))
+                        .frame(maxWidth: 120)
+                }
+                row(" ") {
+                    Toggle(isOn: $vm.loadingAutoHideOnTarget) {
+                        toggleLabel(
+                            vm.loadingSource == .logFile
+                                ? "Hide when log fills"
+                                : "Hide when application launched",
+                            muted: " — only with an explicit line count above"
+                        )
+                    }
+                    .toggleStyle(.checkbox)
+                    .disabled(vm.loadingExpectedLineCountText
+                                .trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
+            row("Splash screen",
+                help: "Optional. PNG or JPEG, displayed centered on screen with the loading window beneath it. Path inside the source folder stays relative; absolute paths get copied per install mode.") {
+                pathPicker(text: $vm.splashFile,
+                           placeholder: "splash.png or splash.jpg",
+                           filter: .image)
+            }
+
             row("App icon",
                 help: "PNG / JPEG / Windows .ico / .icns. Picking a file inside the source folder writes a relative path; anything outside writes an absolute path.") {
                 iconPathPicker(text: $vm.iconFile,

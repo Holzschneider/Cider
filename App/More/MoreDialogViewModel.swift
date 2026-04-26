@@ -118,6 +118,13 @@ final class MoreDialogViewModel: ObservableObject {
     @Published var splashTransparent: Bool = true
     @Published var iconFile: String = ""
 
+    // Loading window
+    @Published var loadingEnabled: Bool = true
+    @Published var loadingSource: CiderConfig.Loading.Source = .terminal
+    @Published var loadingLogFilePath: String = ""
+    @Published var loadingExpectedLineCountText: String = ""   // empty = "use measured"
+    @Published var loadingAutoHideOnTarget: Bool = false
+
     // MARK: - Round-trip
 
     // Reset every form field to its brand-new default — the same
@@ -160,6 +167,12 @@ final class MoreDialogViewModel: ObservableObject {
         splashFile = ""
         splashTransparent = true
         iconFile = ""
+
+        loadingEnabled = CiderConfig.Loading.default.enabled
+        loadingSource = CiderConfig.Loading.default.source
+        loadingLogFilePath = ""
+        loadingExpectedLineCountText = ""
+        loadingAutoHideOnTarget = CiderConfig.Loading.default.autoHideOnTarget
 
         generalError = nil
         externalSourceError = nil
@@ -206,6 +219,13 @@ final class MoreDialogViewModel: ObservableObject {
         splashTransparent = config.splash?.transparent ?? true
         iconFile = config.icon ?? ""
         originURL = config.originURL ?? ""
+
+        let loading = config.loading ?? CiderConfig.Loading.default
+        loadingEnabled = loading.enabled
+        loadingSource = loading.source
+        loadingLogFilePath = loading.logFilePath ?? ""
+        loadingExpectedLineCountText = loading.expectedLineCount.map { String($0) } ?? ""
+        loadingAutoHideOnTarget = loading.autoHideOnTarget
     }
 
     // Seed sensible defaults from a drop. Sets sourcePath for the
@@ -344,9 +364,24 @@ final class MoreDialogViewModel: ObservableObject {
                 file: splashFile,
                 transparent: splashTransparent
             ),
+            loading: buildLoadingOrNil(),
             icon: emptyToNil(iconFile),
             originURL: emptyToNil(originURL)
         )
+    }
+
+    // Returns nil when the loading struct would equal the default —
+    // keeps the persisted cider.json clean for the common case.
+    private func buildLoadingOrNil() -> CiderConfig.Loading? {
+        let loading = CiderConfig.Loading(
+            enabled: loadingEnabled,
+            source: loadingSource,
+            logFilePath: emptyToNil(loadingLogFilePath),
+            expectedLineCount: Int(
+                loadingExpectedLineCountText.trimmingCharacters(in: .whitespaces)),
+            autoHideOnTarget: loadingAutoHideOnTarget
+        )
+        return loading == .default ? nil : loading
     }
 
     // MARK: - Per-field validation (Phase 9)

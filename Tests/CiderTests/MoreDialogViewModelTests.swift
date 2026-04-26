@@ -24,6 +24,10 @@ final class MoreDialogViewModelTests: XCTestCase {
                         winetricks: ["corefonts", "vcrun2019"],
                         console: true, inheritConsole: false),
             splash: .init(file: "splash.png", transparent: true),
+            loading: .init(enabled: true, source: .logFile,
+                           logFilePath: "logs/startup.log",
+                           expectedLineCount: 1200,
+                           autoHideOnTarget: true),
             icon: "icon.icns",
             originURL: "https://example.org/cider.json"
         )
@@ -40,6 +44,7 @@ final class MoreDialogViewModelTests: XCTestCase {
         XCTAssertEqual(rebuilt.graphics, original.graphics)
         XCTAssertEqual(rebuilt.wine, original.wine)
         XCTAssertEqual(rebuilt.splash, original.splash)
+        XCTAssertEqual(rebuilt.loading, original.loading)
         XCTAssertEqual(rebuilt.icon, original.icon)
         XCTAssertEqual(rebuilt.originURL, original.originURL)
     }
